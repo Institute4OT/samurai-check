@@ -114,14 +114,16 @@ export const quizQuestions: QuizQuestion[] = [
     id: 8,
     questionText: "Q8. 経営判断や指示に関して、社内でこんな声が\"聞こえてきた\"ことはありませんか？（複数選択）",
     options: [
-      { text: '「また方針転換か…」', score: 0 },
-      { text: '「上は現場のことをわかってないよな」', score: 0 },
-      { text: '「結局、現場にしわ寄せがくるんだよな・・・」', score: 0 },
-      { text: '「判断を仰ぐと\"自分で考えろ\"と言われるが、勝手に決めると怒られる」', score: 0 },
-      { text: '「あの判断はさすがだよな！」', score: 3 },
-      { text: '「指示が明確だから迷わず行動できるよ」', score: 3 },
-      { text: '「ウチは挑戦を後押ししてくれるのがいいよね」', score: 3 },
-      { text: '「意見をきいてくれると頑張ろうって気になるよね」', score: 3 }
+      { text: "また方針転換か…", score: 0 },
+      { text: "上は現場のことをわかってないよな", score: 0 },
+      { text: "結局、現場にしわ寄せがくるんだよな…", score: 0 },
+      { text: "『自分で考えろ』と言われるが、勝手に決めると怒られる", score: 0 },
+      { text: "ウチの社長は決断が早くていいよね", score: 3 },
+      { text: "現場のことも考えてくれてる", score: 3 },
+      { text: "指示が明確で迷わず動ける", score: 3 },
+      { text: "上下関係なく発言しやすい", score: 3 },
+      { text: "ウチの会社は挑戦しやすい", score: 3 },
+      { text: "該当するものはない", score: 0 }
     ],
     isMultipleChoice: true,
     progressPercentage: 57.1
