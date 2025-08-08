@@ -170,15 +170,28 @@ export default function Home() {
     }
   };
 
-  const handleCheckboxChange = (value: string) => {
-    setSelectedAnswers(prev => {
-      if (prev.includes(value)) {
-        return prev.filter(item => item !== value);
-      } else {
-        return [...prev, value];
-      }
-    });
-  };
+const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
+
+const handleCheckboxChange = (value: string) => {
+  setSelectedAnswers((prev) => {
+    const isNone = NONE_LABELS.has(value);
+
+    // すでに選んでいた場合はトグルOFF
+    if (prev.includes(value)) {
+      return prev.filter((v) => v !== value);
+    }
+
+    // 「該当なし」を選んだら、それだけにする
+    if (isNone) {
+      return [value];
+    }
+
+    // 通常の選択肢を選んだら、「該当なし」が入っていれば外す
+    const withoutNone = prev.filter((v) => !NONE_LABELS.has(v));
+    return [...withoutNone, value];
+  });
+};
+
 
   const handleRadioChange = (value: string) => {
     setSelectedAnswers([value]);

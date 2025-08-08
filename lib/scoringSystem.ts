@@ -66,6 +66,13 @@ export function calculateCategoryScores(responses: { questionId: number; selecte
       return;
     }
 
+    // 安全網: 「該当するものはない」が含まれている場合は、それだけを残す
+    const noneOption = selectedAnswers.find(ans => ans === "該当するものはない");
+    if (noneOption && selectedAnswers.length > 1) {
+      console.warn(`"${qKey}"で「該当するものはない」と他の選択肢が同時に選ばれていたため、排他処理を適用しました`);
+      selectedAnswers = [noneOption];
+    }
+
     // 該当する質問データを取得
     const questionData = quizQuestions.find(q => q.id === questionId);
     if (!questionData) {
