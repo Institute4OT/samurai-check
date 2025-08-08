@@ -1,3 +1,33 @@
 node_modules
 .env.local
 .next
+# Nodeモジュール
+node_modules
+
+# 環境変数ファイル
+.env
+.env*.local
+
+# Next.jsビルド成果物
+.next
+out
+
+# ログ類
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OSごとの不要ファイル
+.DS_Store
+Thumbs.db
+
+# VSCode設定（共有しない場合）
+.vscode/
+
+# TypeScriptキャッシュ
+*.tsbuildinfo
+
+# その他ビルド・キャッシュ
+.cache
+dist
