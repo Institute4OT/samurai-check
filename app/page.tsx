@@ -1,7 +1,7 @@
+// app/page.tsx
 'use client';
 
-import React from 'react';
-import { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import QuizQuestion from '@/components/QuizQuestion';
 import StartScreen from '@/components/StartScreen';
 import { quizQuestions, QuizQuestion as QuizQuestionType } from '@/lib/quizQuestions';
@@ -12,28 +12,23 @@ import { supabase, SamuraiResult } from '@/lib/supabase';
 import { generateScoreComments } from '@/lib/generateScoreComments';
 import { Copy, Check } from 'lucide-react';
 
-// Function to get emoji and label based on score
+// スコアに応じたラベル
 function getEmojiLabel(score: number): string {
-  if (score >= 2.5) {
-    return '😄 良好';
-  } else if (score >= 1.5) {
-    return '😐 注意';
-  } else if (score >= 1.0) {
-    return '😰 ややリスク';
-  } else {
-    return '😱 重大リスク';
-  }
+  if (score >= 2.5) return '😄 良好';
+  if (score >= 1.5) return '😐 注意';
+  if (score >= 1.0) return '😰 ややリスク';
+  return '😱 重大リスク';
 }
 
 export default function Home() {
-  const [currentStep, setCurrentStep] = useState('start'); // 'start' | 'q1' | 'q2' | ... | 'result'
+  const [currentStep, setCurrentStep] = useState<'start' | `q${number}` | 'result'>('start');
   const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
   const [shuffledQuestions, setShuffledQuestions] = useState<QuizQuestionType[]>([]);
   const [allAnswers, setAllAnswers] = useState<{ questionId: number; selectedAnswers: string[] }[]>([]);
   const [finalScores, setFinalScores] = useState<CategoryScores | null>(null);
   const [samuraiType, setSamuraiType] = useState<SamuraiType | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [generatedComments, setGeneratedComments] = useState<{strengths: string[]; tips: string[]}>({ strengths: [], tips: [] });
+  const [generatedComments, setGeneratedComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
   const [copied, setCopied] = useState(false);
 
   const copyToClipboard = async (text: string) => {
@@ -46,38 +41,42 @@ export default function Home() {
     }
   };
 
-  // 質問の選択肢を一度だけシャッフルして保存
+  // 質問の選択肢を一度だけシャッフル
   useEffect(() => {
-    const questionsWithShuffledOptions = quizQuestions.map(question => ({
-      ...question,
-      options: shuffleArray(question.options)
+    const questionsWithShuffledOptions = quizQuestions.map(q => ({
+      ...q,
+      options: shuffleArray(q.options),
     }));
     setShuffledQuestions(questionsWithShuffledOptions);
   }, []);
 
-  // Save results to Supabase
-  const saveResultsToSupabase = async (scores: CategoryScores, samuraiType: SamuraiType, allAnswers: any[]) => {
+  // Supabase へ結果保存（created_at は DB の DEFAULT に任せる）
+  const saveResultsToSupabase = async (
+    scores: CategoryScores,
+    samuraiType: SamuraiType,
+    answers: { questionId: number; selectedAnswers: string[] }[],
+  ) => {
     try {
-      const generatedUserId = crypto.randomUUID();
-      
-      // Convert allAnswers to score_pattern format
-      const scorePattern: any = {};
-      allAnswers.forEach(answer => {
-        scorePattern[`Q${answer.questionId}`] = answer.selectedAnswers;
+      const generatedUserId =
+        globalThis.crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+      // score_pattern 生成
+      const scorePattern: Record<string, string[]> = {};
+      answers.forEach(a => {
+        scorePattern[`Q${a.questionId}`] = a.selectedAnswers;
       });
-      
-      const resultData: Omit<SamuraiResult, 'created_at'> = {
+
+      // DB 挿入データ
+      const resultData: Partial<SamuraiResult> & Record<string, any> = {
         id: generatedUserId,
         score_pattern: scorePattern,
         result_type: samuraiType,
         name: null,
         email: null,
-        company_size: null
+        company_size: null,
       };
 
-      const { data, error } = await supabase
-        .from('samurairesults')
-        .insert([resultData]);
+      const { error } = await supabase.from('samurairesults').insert(resultData).select();
 
       if (error) {
         console.error('Error saving results to Supabase:', error);
@@ -90,7 +89,6 @@ export default function Home() {
     }
   };
 
-  // Save results to Supabase
   const startQuiz = () => {
     setCurrentStep('q1');
     setSelectedAnswers([]);
@@ -98,109 +96,77 @@ export default function Home() {
     setFinalScores(null);
     setSamuraiType(null);
     setUserId(null);
-    setUserId(null);
   };
 
   const nextQuestion = async () => {
-    // 現在の質問番号を取得
-    const currentQuestionNumber = parseInt(currentStep.replace('q', ''));
-    
+    const currentQuestionNumber = parseInt(String(currentStep).replace('q', ''), 10);
+
     // 現在の回答を保存
-    const newAnswer = {
-      questionId: currentQuestionNumber,
-      selectedAnswers: [...selectedAnswers]
-    };
-    
+    const newAnswer = { questionId: currentQuestionNumber, selectedAnswers: [...selectedAnswers] };
     const updatedAllAnswers = [...allAnswers, newAnswer];
     setAllAnswers(updatedAllAnswers);
-    
+
     console.log(`Q${currentQuestionNumber}の回答:`, selectedAnswers);
-    
-    // 次の質問に進むか結果画面に遷移
+
     if (currentQuestionNumber < quizQuestions.length) {
-      setCurrentStep(`q${currentQuestionNumber + 1}`);
+      setCurrentStep(`q${currentQuestionNumber + 1}` as `q${number}`);
     } else {
-      // 全質問完了時にスコア計算
+      // スコア計算
       const scores = calculateCategoryScores(updatedAllAnswers);
       setFinalScores(scores);
-      
-      // 戦国武将タイプを判定
+
+      // 武将タイプ判定
       const judgedSamuraiType = judgeSamuraiType(scores);
       setSamuraiType(judgedSamuraiType);
-      
-      // スコアコメントを生成
+
+      // コメント生成
       const comments = generateScoreComments(scores);
       setGeneratedComments(comments);
-      
-      // Supabaseに結果を保存
+
+      // Supabase に結果を保存（1回だけ呼ぶ）
       await saveResultsToSupabase(scores, judgedSamuraiType, updatedAllAnswers);
-      
-      // Supabaseに結果を保存
-      await saveResultsToSupabase(scores, judgedSamuraiType, updatedAllAnswers);
-      
-      // デバッグ情報を出力
+
+      // デバッグ出力
       debugScoreCalculation(updatedAllAnswers);
       console.log('判定された戦国武将タイプ:', judgedSamuraiType);
-      
+
       setCurrentStep('result');
     }
-    
+
     setSelectedAnswers([]);
   };
 
   const prevQuestion = () => {
-    const currentQuestionNumber = parseInt(currentStep.replace('q', ''));
-    
+    const currentQuestionNumber = parseInt(String(currentStep).replace('q', ''), 10);
     if (currentQuestionNumber > 1) {
-      // 前の質問に戻る
-      setCurrentStep(`q${currentQuestionNumber - 1}`);
-      
-      // 前の質問の回答を復元
-      const prevAnswerIndex = currentQuestionNumber - 2; // 0-based index
+      setCurrentStep(`q${currentQuestionNumber - 1}` as `q${number}`);
+      const prevAnswerIndex = currentQuestionNumber - 2; // 0-based
       if (prevAnswerIndex >= 0 && prevAnswerIndex < allAnswers.length) {
         const prevAnswer = allAnswers[prevAnswerIndex];
         setSelectedAnswers([...prevAnswer.selectedAnswers]);
-        
-        // allAnswersから現在の質問以降の回答を削除
-        const updatedAllAnswers = allAnswers.slice(0, prevAnswerIndex);
-        setAllAnswers(updatedAllAnswers);
+        setAllAnswers(allAnswers.slice(0, prevAnswerIndex));
       } else {
         setSelectedAnswers([]);
       }
     }
   };
 
-const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
+  const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
 
-const handleCheckboxChange = (value: string) => {
-  setSelectedAnswers((prev) => {
-    const isNone = NONE_LABELS.has(value);
-
-    // すでに選んでいた場合はトグルOFF
-    if (prev.includes(value)) {
-      return prev.filter((v) => v !== value);
-    }
-
-    // 「該当なし」を選んだら、それだけにする
-    if (isNone) {
-      return [value];
-    }
-
-    // 通常の選択肢を選んだら、「該当なし」が入っていれば外す
-    const withoutNone = prev.filter((v) => !NONE_LABELS.has(v));
-    return [...withoutNone, value];
-  });
-};
-
-
-  const handleRadioChange = (value: string) => {
-    setSelectedAnswers([value]);
+  const handleCheckboxChange = (value: string) => {
+    setSelectedAnswers(prev => {
+      const isNone = NONE_LABELS.has(value);
+      if (prev.includes(value)) return prev.filter(v => v !== value);
+      if (isNone) return [value];
+      const withoutNone = prev.filter(v => !NONE_LABELS.has(v));
+      return [...withoutNone, value];
+    });
   };
 
+  const handleRadioChange = (value: string) => setSelectedAnswers([value]);
+
   // スタート画面
-  if (currentStep === 'start') {
-    return <StartScreen startQuiz={startQuiz} />;
-  }
+  if (currentStep === 'start') return <StartScreen startQuiz={startQuiz} />;
 
   // 結果画面
   if (currentStep === 'result') {
@@ -208,62 +174,49 @@ const handleCheckboxChange = (value: string) => {
       <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
         <div className="text-center max-w-4xl mx-auto p-8">
           <h2 className="text-2xl font-bold mb-8">診断結果</h2>
-          
-          {/* Warlord Type Display */}
+
+          {/* Warlord Type */}
           {samuraiType && (
             <div className="mb-8 p-6 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 rounded-lg">
-              <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-4">
-                {samuraiType}
-              </h1>
+              <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-4">{samuraiType}</h1>
               <p className="text-lg md:text-xl text-gray-700 leading-relaxed">
                 {samuraiDescriptions[samuraiType]}
               </p>
               {userId && (
                 <div className="flex items-center justify-center mt-4 space-x-2">
-                  <p className="text-sm text-gray-500">
-                    診断ID: {userId}
-                  </p>
+                  <p className="text-sm text-gray-500">診断ID: {userId}</p>
                   <button
                     onClick={() => copyToClipboard(userId)}
                     className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
                     title="診断IDをコピー"
                   >
-                    {copied ? (
-                      <Check className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
+                    {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                   </button>
                 </div>
               )}
             </div>
           )}
-          
+
           {finalScores && (
             <div className="space-y-4 text-left">
               <h3 className="text-xl font-semibold mb-4 text-center">カテゴリ別スコア（0〜3点）</h3>
               {Object.entries(finalScores).map(([category, score]) => {
                 const emojiLabel = getEmojiLabel(score);
-                const getScoreColor = (score: number): string => {
-                  if (score >= 2.5) return 'text-green-600';
-                  if (score >= 2.0) return 'text-yellow-600';
-                  return 'text-red-600';
-                };
+                const getScoreColor = (s: number) =>
+                  s >= 2.5 ? 'text-green-600' : s >= 2.0 ? 'text-yellow-600' : 'text-red-600';
                 return (
                   <div key={category} className="flex justify-between items-center p-3 bg-gray-50 rounded">
                     <span className="font-medium">{category}</span>
                     <div className="flex items-center">
                       <span className={`text-lg font-bold ${getScoreColor(score)}`}>{Math.min(score, 3).toFixed(2)}点</span>
-                      <span className="text-sm font-medium text-gray-800 ml-2">
-                        {emojiLabel}
-                      </span>
+                      <span className="text-sm font-medium text-gray-800 ml-2">{emojiLabel}</span>
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
-          
+
           {(generatedComments.strengths.length > 0 || generatedComments.tips.length > 0) && (
             <div className="mt-8 text-left max-w-3xl mx-auto">
               <h3 className="text-lg font-semibold mb-2">🔍 あなたの特徴とヒント</h3>
@@ -291,8 +244,8 @@ const handleCheckboxChange = (value: string) => {
               )}
             </div>
           )}
-          
-          {/* Report Preview Section */}
+
+          {/* Report Preview */}
           <div className="mt-12 text-center">
             <p className="text-gray-600 text-sm mb-2">※ご希望の方には、こんなレポートを無料でお届け！</p>
             <img
@@ -301,7 +254,7 @@ const handleCheckboxChange = (value: string) => {
               className="mx-auto w-[300px] rounded-lg shadow-md"
             />
           </div>
-          
+
           <div className="mt-8 space-y-4">
             <button
               onClick={startQuiz}
@@ -310,14 +263,14 @@ const handleCheckboxChange = (value: string) => {
               もう一度診断する
             </button>
             <button
-              onClick={() => window.location.href = `/form${userId ? `?resultId=${userId}` : ''}`}
+              onClick={() => (window.location.href = `/form${userId ? `?resultId=${userId}` : ''}`)}
               className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors duration-200 shadow-lg hover:shadow-xl"
             >
               あなた専用の詳細レポートを受け取る（無料）
             </button>
           </div>
         </div>
-        
+
         {/* Footer */}
         <a
           href="https://ourdx-mtg.com/"
@@ -336,9 +289,9 @@ const handleCheckboxChange = (value: string) => {
     );
   }
 
-  // 質問画面（q1, q2, q3, ...）
-  if (currentStep.startsWith('q')) {
-    const questionNumber = parseInt(currentStep.replace('q', ''));
+  // 質問画面（q1, q2, ...）
+  if (String(currentStep).startsWith('q')) {
+    const questionNumber = parseInt(String(currentStep).replace('q', ''), 10);
     const currentQuestion = shuffledQuestions[questionNumber - 1];
 
     if (!currentQuestion) {
