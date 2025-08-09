@@ -1,6 +1,8 @@
+// app/form/page.tsx
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,195 +10,230 @@ import { Checkbox } from '@/components/ui/checkbox';
 import Footer from '@/components/Footer';
 import { supabase } from '@/lib/supabase';
 
-type StepId = 1 | 2; // まずは2ステップ構成に縮小
-
-interface FormData {
-  agreement: boolean;
-  name: string;
-  email: string;
-  company: string;
-  industry: string;
-  ageRange: string;
-  companySize: string;
-  resultId: string;
-}
-
-const initialFormData: FormData = {
-  agreement: false,
-  name: '',
-  email: '',
-  company: '',
-  industry: '',
-  ageRange: '',
-  companySize: '',
-  resultId: '',
-};
+type FetchState = 'idle' | 'loading' | 'ok' | 'invalid' | 'not_found';
+type SaveState = 'idle' | 'saving' | 'success' | 'error';
 
 export default function FormPage() {
-  const [currentStep, setCurrentStep] = useState<StepId>(1);
-  const [formData, setFormData] = useState<FormData>(initialFormData);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isSubmitted, setIsSubmitted] = useState(false);
+  const sp = useSearchParams();
+  const resultId = useMemo(() => (sp.get('resultId') || '').trim(), [sp]);
 
-  // URLの resultId を拾う
+  const [fetchState, setFetchState] = useState<FetchState>('idle');
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [errorMsg, setErrorMsg] = useState<string>('');
+
+  // 必須
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [agree, setAgree] = useState(false);
+
+  // 追加項目（任意）
+  const [companySize, setCompanySize] = useState('');
+  const [industry, setIndustry] = useState('');
+  const [consult, setConsult] = useState(false);
+
+  // 初期チェック＆既存値の取得
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const rid = params.get('resultId') || '';
-    if (rid) setFormData((p) => ({ ...p, resultId: rid }));
-  }, []);
-
-  const updateFormData = (field: keyof FormData, value: string | boolean) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: '' }));
-  };
-
-  // 今は step1 と step2 のみ検証
-  const validateStep = (step: StepId) => {
-    const nextErrors: Record<string, string> = {};
-    if (step === 1) {
-      if (!formData.agreement) nextErrors.agreement = 'この項目への同意が必要です';
-    }
-    if (step === 2) {
-      if (!formData.name.trim()) nextErrors.name = '氏名は必須です';
-      const email = formData.email.trim();
-      if (!email) {
-        nextErrors.email = 'メールアドレスは必須です';
-      } else {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) nextErrors.email = '有効なメールアドレスを入力してください';
+    const run = async () => {
+      if (!resultId || resultId.length < 10) {
+        setFetchState('invalid');
+        return;
       }
-    }
-    setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
-  };
+      setFetchState('loading');
 
-  const nextStep = async () => {
-    if (!validateStep(currentStep)) return;
+      const { data, error } = await supabase
+        .from('samurairesults')
+        .select('id, name, email, company_size, industry, is_consult_request')
+        .eq('id', resultId)
+        .maybeSingle();
 
-    // 今は2ステップ目が「送信」扱い
-    if (currentStep === 1) {
-      setCurrentStep(2);
+      if (error) {
+        setErrorMsg(`初期取得エラー: ${error.message}`);
+        setFetchState('invalid');
+        return;
+      }
+
+      if (!data) {
+        // 行がまだ無い場合も、フォーム入力→送信で upsert する前提でOK
+        setFetchState('ok');
+        return;
+      }
+
+      if (data.name) setName(data.name);
+      if (data.email) setEmail(data.email);
+      if (data.company_size) setCompanySize(data.company_size);
+      if (data.industry) setIndustry(data.industry);
+      if (data.is_consult_request !== undefined) setConsult(Boolean(data.is_consult_request));
+
+      setFetchState('ok');
+    };
+
+    run();
+  }, [resultId]);
+
+  const validEmail = (t: string) => /\S+@\S+\.\S+/.test(t.trim());
+  const canSubmit =
+    fetchState === 'ok' &&
+    saveState !== 'saving' &&
+    name.trim().length > 0 &&
+    validEmail(email) &&
+    agree;
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+
+    setSaveState('saving');
+    setErrorMsg('');
+
+    const payload = {
+      id: resultId,
+      name: name.trim(),
+      email: email.trim(),
+      company_size: companySize || null,
+      industry: industry.trim() || null,
+      is_consult_request: consult,
+      // created_at は DB の DEFAULT now() に任せる
+    };
+
+    const { error } = await supabase
+      .from('samurairesults')
+      .upsert(payload, { onConflict: 'id' })
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      setSaveState('error');
+      setErrorMsg(`保存エラー: ${error.message}`);
       return;
     }
-    if (currentStep === 2) {
-      // 送信
-      try {
-        if (formData.resultId) {
-          await supabase
-            .from('samurairesults')
-            .update({
-              name: formData.name,
-              email: formData.email,
-            })
-            .eq('id', formData.resultId);
-        }
-      } catch (e) {
-        // 失敗しても一旦は完了画面へ（後で改善）
-        console.error(e);
-      } finally {
-        setIsSubmitted(true);
-      }
-    }
+
+    setSaveState('success');
   };
 
-  const prevStep = () => {
-    if (currentStep === 2) setCurrentStep(1);
-  };
-
-  // 完了画面（超シンプル）
-  if (isSubmitted) {
+  // 画面：状態別
+  if (fetchState === 'invalid') {
     return (
-      <div className="min-h-screen bg-white text-black flex flex-col">
-        <div className="flex-1 flex items-center justify-center px-4 py-12">
-          <div className="max-w-xl w-full text-center space-y-6">
-            <h1 className="text-3xl font-bold">送信ありがとうございました！</h1>
-            <p className="text-gray-700">入力いただいた情報を受け付けました。</p>
-            <Button variant="outline" onClick={() => (window.location.href = '/')}>
-              診断に戻る
-            </Button>
-          </div>
-        </div>
-        <Footer />
+      <div className="mx-auto max-w-xl px-6 py-10">
+        <h1 className="text-xl font-bold mb-2">URLエラー</h1>
+        <p className="text-red-700 mb-4">resultId が不正です。診断スタートからやり直してください。</p>
+        {errorMsg && <p className="text-xs text-gray-600">詳細: {errorMsg}</p>}
+        <a href="/" className="underline text-blue-600 hover:text-blue-800">診断スタート画面へ</a>
       </div>
     );
   }
+  if (fetchState === 'loading' || fetchState === 'idle') {
+    return <div className="mx-auto max-w-xl px-6 py-10">読み込み中…</div>;
+  }
 
+  // 画面：フォーム
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col">
-      <div className="flex-1 flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-xl space-y-8">
-          <h1 className="text-2xl font-bold text-center">詳細レポートお申込み（簡易版）</h1>
+    <div className="mx-auto max-w-xl px-6 py-10">
+      <h1 className="text-2xl font-bold mb-6">詳細レポートお申込み</h1>
 
-          {/* Step 1: 同意 */}
-          {currentStep === 1 && (
-            <div className="space-y-6">
-              <div className="flex items-start space-x-3 p-4 border rounded-lg">
-                <Checkbox
-                  id="agreement"
-                  checked={formData.agreement}
-                  onCheckedChange={(checked) => updateFormData('agreement', Boolean(checked))}
-                  className="mt-1"
-                />
-                <Label htmlFor="agreement" className="cursor-pointer">
-                  個別アドバイス付き詳細レポート（PDF）をメールで受け取る（無料）
-                  <span className="text-red-500 ml-1">*</span>
-                </Label>
-              </div>
-              {errors.agreement && <p className="text-red-500 text-sm">{errors.agreement}</p>}
+      <form onSubmit={onSubmit} className="space-y-6">
+        <input type="hidden" name="resultId" value={resultId} />
 
-              <div className="flex justify-end">
-                <Button onClick={nextStep} className="bg-blue-600 hover:bg-blue-700">
-                  次へ
-                </Button>
-              </div>
-            </div>
-          )}
+        {/* お名前 */}
+        <div className="space-y-2">
+          <Label htmlFor="name">お名前 <span className="text-red-600">*</span></Label>
+          <Input
+            id="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="例）山田 太郎"
+            required
+          />
+          {!name.trim() && <p className="text-xs text-red-600">お名前を入力してください。</p>}
+        </div>
 
-          {/* Step 2: 氏名・メール */}
-          {currentStep === 2 && (
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="name">
-                  氏名 <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="name"
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => updateFormData('name', e.target.value)}
-                  placeholder="山田太郎"
-                  className={errors.name ? 'border-red-500' : ''}
-                />
-                {errors.name && <p className="text-red-500 text-sm">{errors.name}</p>}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="email">
-                  メールアドレス <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => updateFormData('email', e.target.value)}
-                  placeholder="example@company.com"
-                  className={errors.email ? 'border-red-500' : ''}
-                />
-                {errors.email && <p className="text-red-500 text-sm">{errors.email}</p>}
-              </div>
-
-              <div className="flex justify-between pt-2">
-                <Button variant="outline" onClick={prevStep}>
-                  戻る
-                </Button>
-                <Button onClick={nextStep} className="bg-green-600 hover:bg-green-700">
-                  送信
-                </Button>
-              </div>
-            </div>
+        {/* メール */}
+        <div className="space-y-2">
+          <Label htmlFor="email">メールアドレス <span className="text-red-600">*</span></Label>
+          <Input
+            id="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="例）taro@example.com"
+            inputMode="email"
+            type="email"
+            required
+          />
+          {email.trim() && !validEmail(email) && (
+            <p className="text-xs text-red-600">メール形式が正しくありません。</p>
           )}
         </div>
-      </div>
+
+        {/* 会社規模（任意） */}
+        <div className="space-y-2">
+          <Label htmlFor="company_size">会社規模（任意）</Label>
+          <select
+            id="company_size"
+            className="w-full rounded-md border px-3 py-2"
+            value={companySize}
+            onChange={(e) => setCompanySize(e.target.value)}
+          >
+            <option value="">選択してください</option>
+            <option value="~10名">~10名</option>
+            <option value="11~50名">11~50名</option>
+            <option value="51~100名">51~100名</option>
+            <option value="101~300名">101~300名</option>
+            <option value="301名~">301名~</option>
+          </select>
+        </div>
+
+        {/* 業種（任意） */}
+        <div className="space-y-2">
+          <Label htmlFor="industry">業種（任意）</Label>
+          <Input
+            id="industry"
+            value={industry}
+            onChange={(e) => setIndustry(e.target.value)}
+            placeholder="例）製造、IT、医療、金融 など"
+          />
+        </div>
+
+        {/* 無料相談希望（任意） */}
+        <div className="flex items-start gap-3">
+          <Checkbox
+            id="consult"
+            checked={consult}
+            onCheckedChange={(v) => setConsult(Boolean(v))}
+          />
+          <Label htmlFor="consult" className="text-sm">
+            無料個別相談を希望する（任意）
+          </Label>
+        </div>
+
+        {/* 同意 */}
+        <div className="flex items-start gap-3">
+          <Checkbox
+            id="agree"
+            checked={agree}
+            onCheckedChange={(v) => setAgree(Boolean(v))}
+            required
+          />
+          <Label htmlFor="agree" className="text-sm">
+            入力情報は詳細レポート送付とご連絡にのみ使用します。送信により当法人のプライバシーポリシーに同意したものとみなします。
+          </Label>
+        </div>
+
+        {/* 送信ボタン＆状態 */}
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={!canSubmit}>
+            {saveState === 'saving' ? '送信中…' : '詳細レポートを申し込む'}
+          </Button>
+          {saveState === 'success' && <span className="text-green-700 text-sm">送信完了！</span>}
+          {saveState === 'error' && <span className="text-red-700 text-sm">保存に失敗しました。</span>}
+        </div>
+
+        {saveState === 'error' && errorMsg && (
+          <p className="text-xs text-gray-600">詳細: {errorMsg}</p>
+        )}
+
+        <hr className="my-6" />
+        <div className="text-xs text-gray-500">resultId: <code>{resultId}</code></div>
+      </form>
+
       <Footer />
     </div>
   );
