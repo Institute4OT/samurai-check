@@ -9,15 +9,15 @@ export interface QuizQuestion {
 export const quizQuestions: QuizQuestion[] = [
   {
     id: 1,
-    questionText: "Q1. 会議でこんな光景、見覚えありませんか？（複数選択）",
+    questionText: "Q1. 自社の会議でよくあるパターンとは？（複数選択可・最大３つまで）",
     options: [
-      { text: '自分が話す時間が長く、部下の発言が少ない', score: 0 },
-      { text: '意見を求めても、中々出てこない（シーンとしがち）', score: 0 },
-      { text: '会議で決めきれず「持ち帰り」が続く', score: 0 },
-      { text: '提案は出るが、結局自分の案で決まることが多い', score: 0 },
-      { text: '特に問題は感じておらず、活発な議論ができていると思う', score: 3 },
-      { text: '会議の場が"責任追及の場"になりがち', score: 0 },
-      { text: '会議では何も決まらず、報告だけで終わることが多い', score: 0 },
+      { text: "説明や指示が中心で、他メンバーの発言が少ない", score: 0 },
+      { text: "意見を求めてもなかなか出てこない", score: 1 },
+      { text: "議論は活発だが、長丁場／担当や期限が曖昧になりがち", score: 2 },
+      { text: "トップや特定の人の案で決まることが多い", score: 1 },
+      { text: "特に問題は感じず、活発に議論できている", score: 3 }, 
+      { text: "トラブル等の原因や経緯の追及に時間を費やすことが多い", score: 0 }, 
+      { text: "報告だけで終わる／議題なしの定例がある", score: 0 },
     ],
     isMultipleChoice: true,
     progressPercentage: 7.1,
@@ -28,7 +28,7 @@ export const quizQuestions: QuizQuestion[] = [
     options: [
       { text: '「いいね！もっと詳しく聞かせてくれる？」', score: 3 },
       { text: '「それ、費用はいくらかかるの？」', score: 1 },
-      { text: '「わかった。検討しておくよ（でも結局何もしない）」', score: 1 },
+      { text: 'とりあえず「検討しておくよ」と受け止める（行動するかどうかは別）', score: 1 },
       { text: '「今は忙しいからまた後で」', score: 0 },
       { text: '「それは前例がないからダメ」', score: 0 },
       { text: '「それは前にも誰かが言ったけど、うまくいかなかったよ」', score: 0 },
@@ -45,7 +45,7 @@ export const quizQuestions: QuizQuestion[] = [
       { text: 'あの部門／人は社長に直接つながっているから特別扱いだ', score: 0 },
       { text: '誰が決めるのかわからない／責任の所在があいまいだ', score: 0 },
       { text: '結局根回しなんだよな…', score: 0 },
-      { text: '会議の後に「もっといいアイデアあったんだけどね…」という声がチラホラ', score: 1 },
+      { text: '会議中には意見が出ず、終わってから意見や不満がチラホラ', score: 1 },
       { text: '会議の結果が納得できる', score: 3 },
       { text: 'そういう声は特に耳に入ってこない', score: 2 }
     ],
@@ -54,7 +54,7 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     id: 4,
-    questionText: "Q4. 社員との関係について、次のうち当てはまるものをすべて選んでください（複数選択）",
+    questionText: "Q4. 社員との関係について、次のうち当てはまるものをすべて選んでください（複数選択可・最大３つまで）",
     options: [
       { text: '話といえば主に業務連絡で、プライベートな話は出ない', score: 0 },
       { text: 'ミスやトラブル報告が遅れて出てくる', score: 0 },
@@ -70,9 +70,9 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     id: 5,
-    questionText: "Q5. あなたが会社経営で重視していることは？（複数回答可）",
+    questionText: "Q5. あなたが会社経営で重視していることは？（複数選択可・最大３つまで）",
     options: [
-      { text: '昔のやり方を大事にしている', score: 0 },
+      { text: 'これまでのやり方／前例を大事にしている', score: 0 },
       { text: '最終的には自分の勘で決める', score: 0 },
       { text: '経験や場数', score: 1 },
       { text: 'データや外部環境の変化', score: 3 },
@@ -87,10 +87,10 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     id: 6,
-    questionText: "Q6. こんなセリフ、言ったことありませんか？（複数選択）",
+    questionText: "Q6. こんなセリフ、言ったことありませんか？（複数選択可・最大３つまで）",
     options: [
       { text: '昔は○○だった／オレの時代では○○だった', score: 0 },
-      { text: '『○○世代はさ〜』『女の子は』『男なら』などつい属性でくくってしまう', score: 0 },
+      { text: '『○○世代は』『女の子は』『男なら』などつい属性でくくってしまう', score: 0 },
       { text: '何でもかんでも変えればいいってもんじゃない', score: 0 },
       { text: '「普通は〜」「常識では〜」という言い回しをよく使う', score: 0 },
       { text: '面白そうだね。まずはそれでいってみよう', score: 3 },
@@ -105,19 +105,18 @@ export const quizQuestions: QuizQuestion[] = [
     id: 7,
     questionText: "Q7. 社内のDXやAI導入へのあなたの姿勢に近いものは？（単一選択）",
     options: [
-      { text: '自ら旗振り役となってDXやAI導入を推進している', score: 3 },
-      { text: '詳しくない分野だが、信頼できる部下に任せている', score: 2 },
-      { text: '詳しくないので、とりあえず部下に丸投げしている', score: 1 },
-      { text: '導入しているが、まだ十分に活用されていない', score: 1 },
-      { text: '正直よくわからない', score: 1 },
-      { text: '自分には関係ないと思っている', score: 0 }
+      { text: '先行導入して小さく回し、現場で運用改善を進めている', score: 3 },
+      { text: '計画立案・情報収集中で、PoC/試行の準備をしている', score: 2 },
+      { text: '社内に抵抗勢力があり、導入には苦戦中', score: 1 },
+      { text: '重要性は理解しているが、他優先で着手できていない', score: 0 },
+      { text: '「うちの業界には関係ない」と考えている', score: 0 }
     ],
     isMultipleChoice: false,
     progressPercentage: 50.0
   },
   {
     id: 8,
-    questionText: "Q8. 経営判断や指示に関して、社内でこんな声が\"聞こえてきた\"ことはありませんか？（複数選択）",
+    questionText: "Q8. 経営判断や指示に関して、社内でこんな声が\"聞こえてきた\"ことはありませんか？（複数選択可・最大３つまで）",
     options: [
       { text: 'また方針転換か…', score: 0 },
       { text: '上は現場のことをわかってないよな', score: 0 },
@@ -133,7 +132,7 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     id: 9,
-    questionText: "Q9. 最近、こんな現象はありませんか？（複数選択）",
+    questionText: "Q9. 最近、こんな現象はありませんか？（複数選択可・最大３つまで）",
     options: [
       { text: '以前は発言していた社員が、最近あまり発言しなくなった', score: 0 },
       { text: '気にかけていた社員が、何も言わずに辞めていった', score: 0 },
@@ -149,14 +148,13 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     id: 10,
-    questionText: "Q10. あなた自身の「変わる覚悟」についてどう思いますか？（単一選択）",
+    questionText: "Q10. 変革に対するあなた自身の「変わる覚悟」は？（単一選択）",
     options: [
-      { text: '常に変わり続ける覚悟を持っている', score: 3 },
-      { text: '必要になったら変わるつもりでいる', score: 2 },
-      { text: '頭ではわかっているけど、なかなか行動できていない', score: 2 },
+      { text: 'まず自分が変わる覚悟で行動している／始めている', score: 3 },
+      { text: '頭では理解し、部分的に着手しているが継続が課題', score: 2 },
       { text: '変わることは大事だと思うが、今のやり方でも大きな問題は感じていない', score: 1 },
-      { text: '自分が変わらないと会社が変われないとは思っていない', score: 0 },
-      { text: '自分ではなく、部下が変わるべきだと思う', score: 0 }
+      { text: '必要になったら変わるつもりでいる', score: 0 },
+      { text: '世代交代の観点からも、まずは現場主導で変わるのが望ましいと思う', score: 0 },
     ],
     isMultipleChoice: false,
     progressPercentage: 71.4
@@ -178,25 +176,24 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     id: 12,
-    questionText: "Q12. 退職した社員について、こんな傾向ありませんか？（複数選択）",
+    questionText: "Q12. 退職した社員について、こんな傾向ありませんか？（複数選択可・最大３つまで）",
     options: [
-      { text: 'うちに残ってほしい人ほど、あっさり辞めていく', score: 0 },
-      { text: '辞める前に相談されたことがない（あるいは相談が形だけ）', score: 0 },
-      { text: '退職代行を使う社員が出てきた', score: 0 },
-      { text: '退職理由は「介護」「出産」「スキルアップ」などが多い', score: 1 },
-      { text: 'そもそも退職者は滅多にいない', score: 3 },
-      { text: '辞める前に、どうにか続けられないかと相談されたことがある', score: 3 },
-      { text: '退職後も連絡をくれたり、イベントに顔を出してくれたりする人がいる', score: 3 },
-      { text: '退職しても、今も連携して一緒に仕事している人がいる', score: 3 }
+      { text: "うちに残ってほしい人ほど、あっさり辞めていく", score: 0 },
+      { text: "退職代行を使う社員が出てきた", score: 0 },
+      { text: "退職理由は「介護」「出産」「スキルアップ」などが多い", score: 1 },
+      { text: "そもそも退職者は滅多にいない", score: 3 },
+      { text: "辞める前に、どうにか続けられないかと相談されたことがある", score: 3 },
+      { text: "退職後も連絡をくれたり、イベントに顔を出してくれたりする人がいる", score: 2 }, // ← 3→2 に調整
+      { text: "退職しても、今も連携して一緒に仕事している人がいる", score: 3 },
     ],
     isMultipleChoice: true,
     progressPercentage: 85.7
   },
   {
     id: 13,
-    questionText: "Q13. あなたの会社での意思決定で、当てはまるものを全て選んでください（複数選択）",
+    questionText: "Q13. あなたの会社での意思決定で、当てはまるものを全て選んでください（複数選択可・最大３つまで）",
     options: [
-      { text: '幹部会や合議制はあるが、社長（または強い役員）が結論を翻すことがある', score: 0 },
+      { text: '合議制はあるが、社長／強い役員が結論を翻すことがある', score: 0 },
       { text: '自分の判断でプロジェクトを止めたり動かしたりすることがある', score: 0 },
       { text: '大きな投資でも相談なく独断で決めることがある', score: 0 },
       { text: '決裁は会議より「根回し」で決まることが多い', score: 1 },

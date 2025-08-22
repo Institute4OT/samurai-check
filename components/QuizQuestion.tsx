@@ -1,3 +1,4 @@
+// components/QuizQuestion.tsx
 'use client';
 
 import React from 'react';
@@ -21,6 +22,8 @@ interface QuizQuestionProps {
   onNext: () => void;
   onPrev: () => void;
   canGoBack: boolean;
+  /** タイトル横に表示する注記（例：「複数選択・最大3つまで」） */
+  noteText?: string;
 }
 
 export default function QuizQuestion({
@@ -35,6 +38,7 @@ export default function QuizQuestion({
   onNext,
   onPrev,
   canGoBack,
+  noteText,
 }: QuizQuestionProps) {
   return (
     <div className="min-h-screen bg-white text-black flex flex-col">
@@ -43,16 +47,26 @@ export default function QuizQuestion({
         <div className="max-w-3xl w-full space-y-8">
           {/* 進捗表示 */}
           <div className="text-center">
-            <p className="text-lg text-gray-600 mb-2">Q{questionNumber} / {totalQuestions}</p>
+            <p className="text-lg text-gray-600 mb-2">
+              Q{questionNumber} / {totalQuestions}
+            </p>
             <div className="w-full bg-gray-200 rounded-full h-2">
-              <div className="bg-red-600 h-2 rounded-full" style={{ width: `${progressPercentage}%` }}></div>
+              <div
+                className="bg-red-600 h-2 rounded-full"
+                style={{ width: `${progressPercentage}%` }}
+              />
             </div>
           </div>
 
           {/* 設問 */}
           <div className="bg-white border border-gray-200 rounded-lg p-6 md:p-8 shadow-sm">
-            <h2 className="text-xl md:text-2xl font-bold text-black mb-6">
+            <h2 className="text-xl md:text-2xl font-bold text-black mb-6 leading-relaxed">
               {questionText}
+              {noteText ? (
+                <span className="ml-2 font-semibold text-rose-600">
+                  （{noteText}）
+                </span>
+              ) : null}
             </h2>
 
             {/* 選択肢 */}
@@ -63,7 +77,7 @@ export default function QuizQuestion({
                   className="flex items-start space-x-3 p-4 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
                 >
                   <input
-                    type={isMultipleChoice ? "checkbox" : "radio"}
+                    type={isMultipleChoice ? 'checkbox' : 'radio'}
                     name={isMultipleChoice ? undefined : `q${questionNumber}`}
                     value={option.text}
                     checked={selectedAnswers.includes(option.text)}
@@ -79,7 +93,6 @@ export default function QuizQuestion({
 
             {/* ナビゲーションボタン */}
             <div className="mt-8 flex justify-between items-center">
-              {/* 前の質問に戻るボタン */}
               {canGoBack ? (
                 <button
                   onClick={onPrev}
@@ -89,10 +102,9 @@ export default function QuizQuestion({
                   <span>前の質問に戻る</span>
                 </button>
               ) : (
-                <div></div> // 空のdivでスペースを確保
+                <div />
               )}
 
-              {/* 次へボタン */}
               {selectedAnswers.length > 0 && (
                 <button
                   onClick={onNext}

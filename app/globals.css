@@ -80,3 +80,65 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  .no-print { display: none !important; }
+  .avoid-break { break-inside: avoid; page-break-inside: avoid; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { margin: 16mm; }
+}
+
+.print-section { break-inside: avoid; }
+.card { padding: 12px; border: 1px solid #ddd; border-radius: 10px; break-inside: avoid; }
+.card-title { font-weight: 700; margin-bottom: 6px; }
+.section-title { font-weight: 800; margin-bottom: 8px; }
+
+@media print {
+  .card, .print-section { break-inside: avoid; }
+  /* 三点リーダ後のはみ出しを抑えるため行間をやや詰める */
+  .card li { line-height: 1.35; margin-bottom: 2mm; }
+}
+
+@media print {
+  .border {
+    border-color: #ccc !important; /* 印刷時も薄くならない枠色 */
+  }
+}
+
+/* ===== PDFレイアウト最適化（共通） ===== */
+.break-inside-avoid {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+/* 印刷時の最適化 */
+@media print {
+  /* カード途中での分割を防止 */
+  .break-inside-avoid,
+  .card,
+  .rounded-2xl {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 枠色を安定（薄くならないように） */
+  .border {
+    border-color: #ccc !important;
+  }
+
+  /* 文字の濃度＆配色を保持 */
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* 見出しの上下余白を統一して無駄な改ページを抑制 */
+  .printable-root h2 { margin: 0 0 8px !important; }
+  .printable-root h3 { margin: 0 0 6px !important; }
+
+  /* 箇条書きの行間を少し詰めて全体をコンパクトに */
+  .printable-root li { line-height: 1.32; margin-bottom: 2px; }
+
+  /* CardContent の上下パディングをやや圧縮（Tailwindの p-6 を上書き） */
+  .printable-root .p-6 { padding-top: 16px !important; padding-bottom: 16px !important; }
+}

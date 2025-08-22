@@ -2,15 +2,17 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import QuizQuestion from '@/components/QuizQuestion';
 import StartScreen from '@/components/StartScreen';
+import QuizQuestion from '@/components/QuizQuestion';
 import { quizQuestions, QuizQuestion as QuizQuestionType } from '@/lib/quizQuestions';
 import { shuffleArray } from '@/lib/utils';
 import { calculateCategoryScores, debugScoreCalculation, CategoryScores } from '@/lib/scoringSystem';
 import { judgeSamuraiType, samuraiDescriptions, SamuraiType } from '@/lib/samuraiJudge';
 import { supabase, SamuraiResult } from '@/lib/supabase';
 import { generateScoreComments } from '@/lib/generateScoreComments';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Share2 } from 'lucide-react';
+import ShareModal from '@/components/common/ShareModal';
+import { Button } from '@/components/ui/button';
 
 // スコアに応じたラベル
 function getEmojiLabel(score: number): string {
@@ -20,6 +22,9 @@ function getEmojiLabel(score: number): string {
   return '😱 重大リスク';
 }
 
+// 「該当なし」系のラベル（同時選択不可）
+const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
+
 export default function Home() {
   const [currentStep, setCurrentStep] = useState<'start' | `q${number}` | 'result'>('start');
   const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
@@ -28,8 +33,14 @@ export default function Home() {
   const [finalScores, setFinalScores] = useState<CategoryScores | null>(null);
   const [samuraiType, setSamuraiType] = useState<SamuraiType | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [generatedComments, setGeneratedComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
+  const [generatedComments, setGeneratedComments] = useState<{ strengths: string[]; tips: string[] }>({
+    strengths: [],
+    tips: [],
+  });
   const [copied, setCopied] = useState(false);
+
+  // シェアモーダル
+  const [shareOpen, setShareOpen] = useState(false);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -43,7 +54,7 @@ export default function Home() {
 
   // 質問の選択肢を一度だけシャッフル
   useEffect(() => {
-    const questionsWithShuffledOptions = quizQuestions.map(q => ({
+    const questionsWithShuffledOptions = quizQuestions.map((q) => ({
       ...q,
       options: shuffleArray(q.options),
     }));
@@ -62,7 +73,7 @@ export default function Home() {
 
       // score_pattern 生成
       const scorePattern: Record<string, string[]> = {};
-      answers.forEach(a => {
+      answers.forEach((a) => {
         scorePattern[`Q${a.questionId}`] = a.selectedAnswers;
       });
 
@@ -151,14 +162,28 @@ export default function Home() {
     }
   };
 
-  const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
-
-  const handleCheckboxChange = (value: string) => {
-    setSelectedAnswers(prev => {
+  // 複数選択：最大3つまで。該当なしは単独選択。
+  const handleCheckboxChangeCapped = (value: string, cap = 3) => {
+    setSelectedAnswers((prev) => {
       const isNone = NONE_LABELS.has(value);
-      if (prev.includes(value)) return prev.filter(v => v !== value);
-      if (isNone) return [value];
-      const withoutNone = prev.filter(v => !NONE_LABELS.has(v));
+
+      // すでに選択 → 解除
+      if (prev.includes(value)) {
+        return prev.filter((v) => v !== value);
+      }
+
+      // 「該当なし」系 → それ単体
+      if (isNone) {
+        return [value];
+      }
+
+      // 現在選択から「該当なし」を除去
+      const withoutNone = prev.filter((v) => !NONE_LABELS.has(v));
+
+      // cap 超過なら弾く
+      if (withoutNone.length >= cap) {
+        return withoutNone; // これ以上は選べない
+      }
       return [...withoutNone, value];
     });
   };
@@ -175,13 +200,15 @@ export default function Home() {
         <div className="text-center max-w-4xl mx-auto p-8">
           <h2 className="text-2xl font-bold mb-8">診断結果</h2>
 
-          {/* Warlord Type */}
+          {/* 武将タイプカード */}
           {samuraiType && (
-            <div className="mb-8 p-6 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 rounded-lg">
+            <div className="mb-6 p-6 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 rounded-lg">
               <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-4">{samuraiType}</h1>
               <p className="text-lg md:text-xl text-gray-700 leading-relaxed">
                 {samuraiDescriptions[samuraiType]}
               </p>
+
+              {/* 診断ID + コピー */}
               {userId && (
                 <div className="flex items-center justify-center mt-4 space-x-2">
                   <p className="text-sm text-gray-500">診断ID: {userId}</p>
@@ -194,9 +221,26 @@ export default function Home() {
                   </button>
                 </div>
               )}
+
+              {/* シェア（モーダル起動） */}
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                <Button variant="secondary" onClick={() => setShareOpen(true)}>
+                  <Share2 className="w-4 h-4 mr-2" />
+                  あなたの武将型をシェアする
+                </Button>
+              </div>
             </div>
           )}
 
+          {/* シェアモーダル本体 */}
+          <ShareModal
+            open={shareOpen}
+            onClose={() => setShareOpen(false)}
+            text={`私は「${samuraiType ?? '武将'}」型だったよ！武将タイプ診断やってみた😄`}
+            subtitle="投稿前に内容をご確認ください。"
+          />
+
+          {/* カテゴリ別スコア */}
           {finalScores && (
             <div className="space-y-4 text-left">
               <h3 className="text-xl font-semibold mb-4 text-center">カテゴリ別スコア（0〜3点）</h3>
@@ -217,6 +261,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* 特徴とヒント */}
           {(generatedComments.strengths.length > 0 || generatedComments.tips.length > 0) && (
             <div className="mt-8 text-left max-w-3xl mx-auto">
               <h3 className="text-lg font-semibold mb-2">🔍 あなたの特徴とヒント</h3>
@@ -314,10 +359,12 @@ export default function Home() {
         options={currentQuestion.options}
         selectedAnswers={selectedAnswers}
         isMultipleChoice={currentQuestion.isMultipleChoice}
-        onAnswerChange={currentQuestion.isMultipleChoice ? handleCheckboxChange : handleRadioChange}
+        onAnswerChange={currentQuestion.isMultipleChoice ? (v) => handleCheckboxChangeCapped(v, 3) : handleRadioChange}
         onNext={nextQuestion}
         onPrev={prevQuestion}
         canGoBack={questionNumber > 1}
+        // 注記は表示しない（設問文に統一）
+        // noteText={currentQuestion.isMultipleChoice ? '複数選択・最大3つまで' : undefined}
       />
     );
   }
