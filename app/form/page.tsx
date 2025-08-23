@@ -18,7 +18,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 
 // ------------------------
-// 定数（readonly tuple で宣言）
+// 定数
 // ------------------------
 const COMPANY_SIZE_VALUES = [
   '1-10','11-50','51-100','101-300','301-500','501-1000','1001+',
@@ -43,9 +43,15 @@ const INDUSTRY_VALUES = [
 
 // ------------------------
 // スキーマ
-//  - agree は boolean にして refine で必須同意を担保
-//  - enum は readonly tuple をそのまま渡す
 // ------------------------
+// UUID もしくは id_ で始まるフォールバックIDを許容
+const ResultIdSchema = z
+  .string()
+  .regex(
+    /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|id_[a-z0-9_-]+)$/i
+  )
+  .optional();
+
 const Schema = z.object({
   email: z.string().email('有効なメールアドレスを入力してください。'),
   name: z.string().min(1, 'お名前は必須です。'),
@@ -53,7 +59,7 @@ const Schema = z.object({
   companySize: z.enum(COMPANY_SIZE_VALUES, { required_error: '会社規模を選択してください。' }),
   industry: z.enum(INDUSTRY_VALUES, { required_error: '業種を選択してください。' }),
   agree: z.boolean().refine(v => v === true, { message: '個人情報の取扱いに同意してください。' }),
-  resultId: z.string().uuid().optional(),
+  resultId: ResultIdSchema,
 });
 
 type FormValues = z.infer<typeof Schema>;
@@ -68,7 +74,6 @@ export default function Page() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(Schema),
-    // useForm の defaultValues は Partial<FormValues> 扱いなので undefined OK
     defaultValues: {
       email: '',
       name: '',
@@ -152,7 +157,7 @@ export default function Page() {
               <FormItem>
                 <FormLabel>会社規模 <span className="text-red-500">＊必須</span></FormLabel>
                 <FormControl>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select defaultValue={field.value} onValueChange={field.onChange}>
                     <SelectTrigger><SelectValue placeholder="選択してください" /></SelectTrigger>
                     <SelectContent>
                       {COMPANY_SIZES.map(cs => (
@@ -166,7 +171,7 @@ export default function Page() {
             )}
           />
 
-          {/* 業種（プルダウン＋必須） */}
+          {/* 業種（必須） */}
           <FormField
             control={form.control}
             name="industry"
@@ -174,7 +179,7 @@ export default function Page() {
               <FormItem>
                 <FormLabel>業種 <span className="text-red-500">＊必須</span></FormLabel>
                 <FormControl>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select defaultValue={field.value} onValueChange={field.onChange}>
                     <SelectTrigger><SelectValue placeholder="選択してください" /></SelectTrigger>
                     <SelectContent>
                       {INDUSTRY_VALUES.map(ind => (

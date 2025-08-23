@@ -1,4 +1,3 @@
-// components/QuizQuestion.tsx
 'use client';
 
 import React from 'react';
@@ -11,10 +10,10 @@ interface Option {
 }
 
 interface QuizQuestionProps {
-  questionNumber: number;
+  questionNumber: number;        // 表示ポジション（1-based）
   totalQuestions: number;
-  progressPercentage: number;
-  questionText: string;
+  progressPercentage: number;    // 0-100
+  questionText: string;          // 元の設問文（先頭に "Q3." などが含まれていてもOK）
   options: Option[];
   selectedAnswers: string[];
   isMultipleChoice: boolean;
@@ -22,8 +21,16 @@ interface QuizQuestionProps {
   onNext: () => void;
   onPrev: () => void;
   canGoBack: boolean;
-  /** タイトル横に表示する注記（例：「複数選択・最大3つまで」） */
+  /** ブロック見出し（設問の1行上に薄色で表示） */
   noteText?: string;
+}
+
+function stripLeadingQ(prefixText: string): string {
+  // 先頭の "Q12." / "Q12、" / "Q12)" / "Q12：" などを除去（全角記号にも耐性）
+  return (prefixText || '').replace(
+    /^\s*Q\s*[0-9０-９]+[.\．、\)\）:：]?\s*/,
+    ''
+  );
 }
 
 export default function QuizQuestion({
@@ -40,86 +47,99 @@ export default function QuizQuestion({
   canGoBack,
   noteText,
 }: QuizQuestionProps) {
+  const cleaned = stripLeadingQ(questionText);
+
+  const isSelected = (v: string) => selectedAnswers.includes(v);
+  const toggle = (v: string) => onAnswerChange(v);
+
   return (
     <div className="min-h-screen bg-white text-black flex flex-col">
-      {/* メインコンテンツ */}
-      <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
-        <div className="max-w-3xl w-full space-y-8">
-          {/* 進捗表示 */}
-          <div className="text-center">
-            <p className="text-lg text-gray-600 mb-2">
-              Q{questionNumber} / {totalQuestions}
-            </p>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div
-                className="bg-red-600 h-2 rounded-full"
-                style={{ width: `${progressPercentage}%` }}
-              />
+      {/* ヘッダー（進捗） */}
+      <div className="w-full max-w-4xl mx-auto px-4 pt-6">
+        <div className="text-center text-gray-600 text-sm mb-2">
+          Q{questionNumber} / {totalQuestions}
+        </div>
+        <div className="w-full bg-gray-200 h-2 rounded">
+          <div
+            className="bg-red-600 h-2 rounded"
+            style={{ width: `${Math.min(Math.max(progressPercentage, 0), 100)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* 本文 */}
+      <div className="flex-1 flex flex-col items-center">
+        <div className="w-full max-w-4xl px-4 py-6">
+          {/* ブロック見出し（薄色・小さめ・設問の一行上） */}
+          {noteText && (
+            <div className="text-gray-500 text-sm md:text-base mb-1">
+              {noteText}
             </div>
+          )}
+
+          {/* 設問タイトル（Q番号は自動付与） */}
+          <h2 className="text-xl md:text-2xl font-semibold leading-relaxed mb-4">
+            {`Q${questionNumber}. `}{cleaned}
+          </h2>
+
+          {/* 選択肢 */}
+          <div className="space-y-3">
+            {options.map((opt, idx) => {
+              const id = `opt-${questionNumber}-${idx}`;
+              return (
+                <label
+                  key={id}
+                  htmlFor={id}
+                  className="flex items-start gap-3 p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                >
+                  {isMultipleChoice ? (
+                    <input
+                      id={id}
+                      type="checkbox"
+                      className="mt-1 h-5 w-5"
+                      checked={isSelected(opt.text)}
+                      onChange={() => toggle(opt.text)}
+                    />
+                  ) : (
+                    <input
+                      id={id}
+                      type="radio"
+                      name={`q-${questionNumber}`}
+                      className="mt-1 h-5 w-5"
+                      checked={isSelected(opt.text)}
+                      onChange={() => toggle(opt.text)}
+                    />
+                  )}
+                  <span className="text-base md:text-lg">{opt.text}</span>
+                </label>
+              );
+            })}
           </div>
 
-          {/* 設問 */}
-          <div className="bg-white border border-gray-200 rounded-lg p-6 md:p-8 shadow-sm">
-            <h2 className="text-xl md:text-2xl font-bold text-black mb-6 leading-relaxed">
-              {questionText}
-              {noteText ? (
-                <span className="ml-2 font-semibold text-rose-600">
-                  （{noteText}）
-                </span>
-              ) : null}
-            </h2>
+          {/* ナビゲーション */}
+          <div className="mt-6 flex items-center justify-between">
+            <button
+              onClick={onPrev}
+              disabled={!canGoBack}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition ${
+                canGoBack ? 'hover:bg-gray-50' : 'opacity-40 cursor-not-allowed'
+              }`}
+            >
+              <ArrowLeft className="w-4 h-4" />
+              前の質問に戻る
+            </button>
 
-            {/* 選択肢 */}
-            <div className="space-y-5">
-              {options.map((option, index) => (
-                <label
-                  key={index}
-                  className="flex items-start space-x-3 p-4 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
-                >
-                  <input
-                    type={isMultipleChoice ? 'checkbox' : 'radio'}
-                    name={isMultipleChoice ? undefined : `q${questionNumber}`}
-                    value={option.text}
-                    checked={selectedAnswers.includes(option.text)}
-                    onChange={() => onAnswerChange(option.text)}
-                    className="mt-1 w-4 h-4 text-red-600 border-gray-300 focus:ring-red-500 rounded"
-                  />
-                  <span className="text-base md:text-lg text-gray-800 leading-relaxed">
-                    {option.text}
-                  </span>
-                </label>
-              ))}
-            </div>
-
-            {/* ナビゲーションボタン */}
-            <div className="mt-8 flex justify-between items-center">
-              {canGoBack ? (
-                <button
-                  onClick={onPrev}
-                  className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors duration-200"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>前の質問に戻る</span>
-                </button>
-              ) : (
-                <div />
-              )}
-
-              {selectedAnswers.length > 0 && (
-                <button
-                  onClick={onNext}
-                  className="flex items-center space-x-2 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg text-lg transition-colors duration-200 shadow-lg hover:shadow-xl"
-                >
-                  <span>次へ</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              )}
-            </div>
+            <button
+              onClick={onNext}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold px-6 py-3 rounded-lg shadow-lg hover:shadow-xl flex items-center gap-2"
+            >
+              次へ
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
 
-      {/* フッター */}
       <Footer />
     </div>
   );

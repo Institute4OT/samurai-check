@@ -1,24 +1,24 @@
 // lib/report/personalization.ts
+// 詳細レポート用の個別コメント＆相談CTAテキスト生成（IOT版：関係性×ベクトル×対話）
 
 // ====== 型 ======
 export type CategoryKey =
-  | 'delegation'
-  | 'orgDrag'
-  | 'commGap'
-  | 'updatePower'
-  | 'genGap'
-  | 'harassmentRisk';
+  | 'delegation'      // 権限委譲・構造健全度
+  | 'orgDrag'         // 組織進化阻害
+  | 'commGap'         // コミュ力誤差
+  | 'updatePower'     // アップデート力
+  | 'genGap'          // ジェネギャップ感覚
+  | 'harassmentRisk'; // 無自覚ハラスメント傾向
 
 export type CategoryScore = { key: CategoryKey; label: string; score: number };
 
-// flags.ts 側で作ったブール群をここでは必要分だけ受け取れるようにしておく
-// （importに依存しないようローカル型でOK）
+// flags.ts 側のブール群（ここでは必要分だけ受ける）
 export type ReportFlags = {
   // 既存
   manyZeroOnQ5?: boolean;
   noRightHand?: boolean;
 
-  // 追加（高シグナル）
+  // 高シグナル
   q1MeetingStalls?: boolean;
   q3Favoritism?: boolean;
   q8SpeakUpLow?: boolean;
@@ -32,7 +32,7 @@ export type ReportFlags = {
   q10Postpone?: boolean;
   q10DelegateToField?: boolean;
 
-  // （必要なら強み系も拾えるようにしておく）
+  // 強み系サイン
   q3DecisionClear?: boolean;
   q11HighTrust?: boolean;
   q12AlumniPositive?: boolean;
@@ -44,57 +44,57 @@ export type ReportFlags = {
 type TemplateKind = 'strength' | 'improvement';
 type TemplateMap = Record<CategoryKey, Record<TemplateKind, string[]>>;
 
-// ====== テンプレ（明確化版） ======
+// ====== テンプレ（IOTの文脈に調整：KPI表現なし） ======
 // ルール：
-// ・strength は「あなたは〜できています。次の一歩：〜」
-// ・improvement は「課題：〜。対策：〜」で端的＆行動に直結
+// ・strength：あなたは〜できています。次の一歩：〜（対話→合意の言葉→確かめ方）
+// ・improvement：課題：〜。対策：〜（目的/制約/最小合格ラインを“1枚化”）
 const TEMPLATES: TemplateMap = {
   delegation: {
     strength: [
-      'あなたは任せる枠と判断の土台を示せています。次の一歩：測り方を軽量化し、チームの自走をさらに加速しましょう。'
+      'あなたは任せる枠（役割・決裁・期限）を示せています。次の一歩：「最小合格ライン」と合意の言葉を1枚化し、軽いレビューリズムで自走を加速しましょう。',
     ],
     improvement: [
-      '課題：権限の線引きが曖昧。対策：Why／判断基準／期限／最小合格ラインを1枚に明示しましょう。'
+      '課題：権限の線引きが曖昧。対策：目的／制約／最小合格ライン（例：品質・コスト・期日）を1枚に明示し、対話で合意→任せる→短い振り返りの順で定着。',
     ],
   },
   orgDrag: {
     strength: [
-      'あなたは“止めない”文化を意識できています。次の一歩：小さく試すための固定枠（予算・時間）を設け、継続運転に。'
+      '“止めない”文化が芽生えています。次の一歩：2週間の小さな試行に「誰と何をどう確かめるか」を添えて、続ける/変える/やめるの合意を先に決めましょう。',
     ],
     improvement: [
-      '課題：“前例重視”で挑戦が萎縮。対策：金額と期間を先に決めた低リスク実験で学習を回しましょう。'
+      '課題：前例重視で挑戦が止まりがち。対策：2週間ミニ実験（担当・仮説・確かめ方・期日）を設計し、合意の言葉で判断を軽くする運用へ移行。',
     ],
   },
   commGap: {
     strength: [
-      'あなたは要点が伝わる話し方ができています。次の一歩：聞き返しテンプレをチームで共有し、誤解の再発を防ぎましょう。'
+      '意図が現場の行動に翻訳できています。次の一歩：「目的→現状→制約→基準→相手の要約」の対話テンプレを共有し、誤解の再発をブロック。',
     ],
     improvement: [
-      '課題：説明した“つもり”が起きがち。対策：目的→現状→制約→基準→相手の要約確認の順で話す癖をつけましょう。'
+      '課題：説明した“つもり”が発生。対策：要点の1スライド化＋「相手の言葉での要約」を必ず入れる会話設計で、ベクトル合わせを進めましょう。',
     ],
   },
   updatePower: {
     strength: [
-      'あなたは新しいツールに前向きです。次の一歩：効果測定を1枚で可視化し、採用の説得力を強化しましょう。'
+      '外の知恵や新しいやり方を前向きに取り入れられています。次の一歩：効果の「確かめ方」を1枚（目的/対象/確かめ方/期日/伴走者）で揃えましょう。',
     ],
     improvement: [
-      '課題：ツールが点在し定着が弱い。対策：目詰まり業務から逆算し「何を→どこで（対象業務）→何で（ツール）」を選定。手順と指標をセットに。'
+      '課題：道具や手法が点在し定着が弱い。対策：「どこをほぐすために何を試すか」から選び、2週間で確かめる流れを作る。合意の言葉で横展開。',
     ],
   },
   genGap: {
     strength: [
-      'あなたは世代差の翻訳（言い換え）ができます。次の一歩：価値観の違いを事例で言語化し、合意形成を早めましょう。'
+      '世代や立場の違いを翻訳できます。次の一歩：期待水準のOK/NG事例を言語化し、本人の「意味づけ」と結びつける対話を増やしましょう。',
     ],
     improvement: [
-      '課題：“最近の若手は…”などと一般化しがち。対策：期待水準とOK/NG例を共有して、行動基準をそろえましょう。'
+      '課題：“最近の若手は…”の一般化。対策：一括りをやめ、個別の手応えを対話で見つける。行動基準を事例で共有し、尊厳を守りながら合意形成。',
     ],
   },
   harassmentRisk: {
     strength: [
-      'あなたは言葉の重みを意識できています。次の一歩：否定語を具体語に置換し、心理的安全性をさらに高めましょう。'
+      '言葉の境界線に配慮があります。次の一歩：NGガイドを1枚で整え、役職者が「観察→事実→期待→支援」でフィードバックできるよう練習。',
     ],
     improvement: [
-      '課題：善意の指導が裏目に出がち。対策：観察→事実→期待→支援の順でフィードバックしましょう。'
+      '課題：善意の指導が裏目に出やすい。対策：外部/匿名の相談ルートを用意し、同意ベースの対話を標準化。合意の言葉を増やして安心を担保。',
     ],
   },
 };
@@ -102,11 +102,11 @@ const TEMPLATES: TemplateMap = {
 // ====== ヘルパ ======
 function pickTop2Bottom2(categories: CategoryScore[]) {
   const high = [...categories].sort((a, b) => (b.score - a.score) || a.key.localeCompare(b.key));
-  const low = [...categories].sort((a, b) => (a.score - b.score) || a.key.localeCompare(b.key));
+  const low  = [...categories].sort((a, b) => (a.score - b.score) || a.key.localeCompare(b.key));
   return { top2: high.slice(0, 2), bottom2: low.slice(0, 2) };
 }
 
-/** スコア由来のフォールバック（personalCommentsが無い時に使う） */
+/** スコア由来のフォールバック（個別テンプレが無い時用の保険） */
 export function genScoreFallbackBullets(input: {
   categories: CategoryScore[];
   flags?: ReportFlags;
@@ -126,87 +126,57 @@ export function genScoreFallbackBullets(input: {
   }
 
   if (strengths.length === 0) strengths.push('強みは測定中。小さな成功の再現で抽出していきましょう。');
-  if (improvements.length === 0) improvements.push('大きなボトルネックは見えません。検証の継続で微調整を。');
+  if (improvements.length === 0) improvements.push('大きなボトルネックは見えません。2週間の小さな試行で微調整を。');
 
-  // ---- ここから notes 生成（回答フラグ由来）----
+  // ---- notes（回答フラグ由来の一言アドバイス）----
   const f = input.flags || {};
 
-  // 既存の2つ
-  if (f.manyZeroOnQ5) {
-    notes.push('価値観（Q5）で0が多め。“やらないことリスト”で判断のエネルギーを節約。');
-  }
-  if (f.noRightHand) {
-    notes.push('右腕/後継の育成が弱め。意思決定の言語化と役割移譲で“秒速”を持続可能に。');
-  }
+  if (f.manyZeroOnQ5) notes.push('価値観（Q5）で0が多め。“やらないことリスト”で意思決定のエネルギーを節約。');
+  if (f.noRightHand) notes.push('右腕/後継の育成が弱め。判断基準の言語化と役割移譲で“秒速”を持続可能に。');
 
-  // 追加（高シグナル）
-  if (f.q14BusFactorHigh) {
-    notes.push('「自分不在で回らない」サイン。判断基準の1枚化と右腕育成でボトルネックを解消。');
-  }
-  if (f.q3Favoritism) {
-    notes.push('えこひいき疑念が生じやすい構造。意思決定の透明度（基準・プロセス）を1枚で共有。');
-  }
-  if (f.q8SpeakUpLow) {
-    notes.push('発言しにくい空気。会議設計（目的・役割・発言ルール・要約担当）で安全性を担保。');
-  }
-  if (f.q12AttritionRisk) {
-    notes.push('離職の予兆に気づきにくい。「観察→事実→期待→支援」を運用し早期発見へ。');
-  }
-  if (f.q1MeetingStalls) {
-    notes.push('会議で決めきれない傾向。「最小合格・期限・責任」の三点セットで意思決定を軽量化。');
-  }
-  if (f.q5TraditionHeavy) {
-    notes.push('伝統・勘への依存が強め。小実験の固定枠（予算/時間）で安全に前進を。');
-  }
-  if (f.q13Backroom) {
-    notes.push('根回し/独断に依存。議論→決定→記録の流れを明文化し、合意形成の納得度を上げる。');
-  }
-  if (f.q11Micromanage) {
-    notes.push('任せ切れない兆候。権限の線引きと判断基準・期限の明示で委譲の成功率UP。');
-  }
-  if (f.q7IndustryDenial) {
-    notes.push('「業界に関係ない」発言あり。他業界の成功を自社文脈に翻訳する場づくりが有効。');
-  }
-  if (f.q7NoAction) {
-    notes.push('重要性は理解していても着手が遅れがち。まずは90日で回す“試すリズム”を設計。');
-  }
-  if (f.q10Postpone) {
-    notes.push('先送り傾向。最初の1テーマを一緒に特定し、90日検証で確実に前進。');
-  }
-  if (f.q10DelegateToField) {
-    notes.push('現場主導志向は良い資質。権限線引きと評価設計を揃えると推進力が増します。');
-  }
-  // ---- notes ここまで ----
+  if (f.q14BusFactorHigh) notes.push('「自分不在で回らない」サイン。基準の1枚化と右腕育成でボトルネック解消。');
+  if (f.q3Favoritism) notes.push('えこひいき疑念。決裁基準とプロセスの可視化で透明度を上げる。');
+  if (f.q8SpeakUpLow) notes.push('発言しにくい空気。会議の目的/役割/発言ルール/要約担当を明確に。');
+  if (f.q12AttritionRisk) notes.push('離職の予兆が見えにくい。1on1で「観察→事実→期待→支援」を運用。');
+  if (f.q1MeetingStalls) notes.push('会議で決めきれない傾向。「最小合格×期限×責任」の三点で意思決定を軽量化。');
+  if (f.q5TraditionHeavy) notes.push('伝統・勘への依存が強め。2週間の試行枠を作って安全に前進。');
+  if (f.q13Backroom) notes.push('根回し/独断に依存。議論→決定→記録をワンフローで明文化。');
+  if (f.q11Micromanage) notes.push('任せ切れない兆候。権限線引きとレビュー設計で委譲の成功率UP。');
+  if (f.q7IndustryDenial) notes.push('「業界に関係ない」発言あり。他業界の成功を自社文脈に翻訳する場づくりを。');
+  if (f.q7NoAction) notes.push('重要性は理解しているが着手遅れ。まずは2週間で確かめる一歩を設計。');
+  if (f.q10Postpone) notes.push('先送り傾向。最初の1テーマを特定し、2週間→4週間→90日と階段状に進める。');
+  if (f.q10DelegateToField) notes.push('現場主導志向は強み。決裁基準と合意の言葉を揃えると推進力が増す。');
 
   return { strengths, improvements, notes };
 }
 
-// === 相談への“迷子フック”生成 ===
+// === 相談への“迷子フック”生成（IOT版ベネフィット） ===
 export const CONSULT_BENEFITS = [
-  '現在地の言語化（優先順位マップ）',
-  '90日アクション案（3つの打ち手＋計測指標）',
-  'あなたの会社版テンプレ1枚（判断基準/任せ方）',
+  '現在地の可視化（秒速レーダー＋優先順位マップ）',
+  '最初の「関係ほぐし」設計（2週間／誰と何をどう話すか／確かめ方＝手応えサイン）',
+  'あなたの会社版「任せ方・決め方」1枚（目的／制約／最小合格ライン／合意の言葉）',
 ] as const;
 
+// カテゴリ別に、相談で深掘りする「問い」を生成（KPI語は使わない）
 const QUESTION_BANK: Record<CategoryKey, ((label: string) => string)[]> = {
   delegation: [
-    (l) => `「${l}」の停滞は、スキル不足か、判断基準の不在か？（見極め所は3つあります）`,
-    (l) => `任せられない理由は人か設計か？“最小合格ライン”の定義で試すと分かります。`,
+    (l) => `「${l}」の停滞はスキル不足か、設計（基準/線引き）か？最初に見極めるチェックは3つです。`,
+    () => `“最小合格ライン”をどう置くと、任せても安心できる？（合意の言葉まで1枚化）`,
   ],
   orgDrag: [
-    (l) => `「${l}」は“前例”か“評価の設計”が原因？どちらを先に変えるべきかを判定します。`,
+    (l) => `「${l}」は前例か評価のどちらがブレーキ？2週間の試行で「確かめ方」と「やめるサイン」を先に決めましょう。`,
   ],
   commGap: [
-    (l) => `「${l}」は言語か構造の問題か？目的→現状→制約の整列でどこまで解ける？`,
+    () => `ビジョンは現場の行動に翻訳されている？「目的→現状→制約→基準→要約」の1スライドで確認。`,
   ],
   updatePower: [
-    (l) => `「${l}」はツール選定か運用定着の課題か？効果測定1枚の作りで変わります。`,
+    () => `新しいやり方の“効果の確かめ方”は？対象・確かめ方・期日・伴走者を1枚にまとめます。`,
   ],
   genGap: [
-    (l) => `「${l}」は価値観翻訳の不足か、期待水準の不一致か？OK/NG事例の精度が鍵。`,
+    () => `価値観ギャップは翻訳不足か、期待水準の不一致か？OK/NG事例と本人の意味づけを合わせます。`,
   ],
   harassmentRisk: [
-    (l) => `「${l}」の不安は言葉選びか、面談設計か？“観察→事実→期待→支援”の運用で判断。`,
+    () => `安心の線引きは十分？外部/匿名ルートと、対話の型（観察→事実→期待→支援）を点検します。`,
   ],
 };
 
@@ -220,9 +190,8 @@ export function genTeaserQuestions(input: { categories: CategoryScore[] }) {
     const makers = QUESTION_BANK[c.key] || [];
     for (const m of makers) questions.push(m(c.label));
   }
-  // 保障：最低2つは出す
   if (questions.length < 2) {
-    questions.push('ボトルネックは構造か人か？最初に変えるべき一点を一緒に特定します。');
+    questions.push('ボトルネックは「関係性」か「設計」か？最初にほぐす一点を一緒に特定します。');
   }
   return { questions, benefits: [...CONSULT_BENEFITS] };
 }
