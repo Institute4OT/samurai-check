@@ -28,7 +28,7 @@ export default function ShareButtons({ typeName, url, className }: Props) {
   }, [url, origin]);
 
   const text = useMemo(
-    () => `私は「${typeName}」でした！武将タイプ診断やってみた😆`,
+    () => `私は「${typeName}」でした！AI時代の経営者 武将タイプ診断やってみた😆`,
     [typeName]
   );
 
