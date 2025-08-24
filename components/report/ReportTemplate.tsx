@@ -4,7 +4,7 @@
 import React, { useMemo, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Crown, Download, Smile, Target, Compass } from 'lucide-react';
+import { Download, Smile, Target, Compass } from 'lucide-react';
 import { useReactToPrint } from 'react-to-print';
 import {
   ResponsiveContainer,
@@ -14,10 +14,13 @@ import {
   PolarRadiusAxis,
   Radar,
 } from 'recharts';
-import { TYPE_CONTENTS } from '@/lib/report/typeContents';
-import Link from 'next/link';
 
-// ★ 追加：フォールバック生成を共通関数に分離
+import { TYPE_CONTENTS } from '@/lib/report/typeContents';
+// 兜マップと型を共通化
+import { kabutoSrcByType, SamuraiLabel } from '@/lib/report/kabutoMap';
+// CTA（会社規模によって表示内容が変わる）
+import ReportCTA from './ReportCTA';
+// スコア由来のフォールバック生成
 import { genScoreFallbackBullets } from '@/lib/report/personalization';
 
 /* ========= 型 ========= */
@@ -29,14 +32,8 @@ export type CategoryKey =
   | 'genGap'
   | 'harassmentRisk';
 
-export type SamuraiType =
-  | '真田幸村型'
-  | '今川義元型'
-  | '斎藤道三型'
-  | '織田信長型'
-  | '豊臣秀吉型'
-  | '徳川家康型'
-  | '上杉謙信型';
+// ← ここが重要：SamuraiLabel をそのまま再利用（重複定義しない）
+export type SamuraiType = SamuraiLabel;
 
 export type CategoryScore = {
   key: CategoryKey;
@@ -45,8 +42,8 @@ export type CategoryScore = {
 };
 
 export type PersonalComments = {
-  talents: string[];     // 各2件想定
-  challenges: string[];  // 各2件想定
+  talents: string[];
+  challenges: string[];
 };
 
 export type ReportInput = {
@@ -54,7 +51,9 @@ export type ReportInput = {
   samuraiType: SamuraiType;
   categories: CategoryScore[];
   flags?: { manyZeroOnQ5?: boolean; noRightHand?: boolean };
-  personalComments?: PersonalComments; // 任意
+  personalComments?: PersonalComments;
+  // CTA 分岐用（任意）
+  companySize?: string;
 };
 
 /* ========= キャッチ（headline のみ使用） ========= */
@@ -72,33 +71,57 @@ const COMMON_BY_TYPE: Record<SamuraiType, { headline: string }> = {
 const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
   ({ data }, ref) => {
     const common = COMMON_BY_TYPE[data.samuraiType];
+
     const chartData = useMemo(
-      () => data.categories.map((c) => ({ subject: c.label, score: Math.max(0, Math.min(3, c.score)) })),
+      () => data.categories.map((c) => ({
+        subject: c.label,
+        score: Math.max(0, Math.min(3, c.score)),
+      })),
       [data.categories]
     );
 
-    // スコア由来のフォールバックを先に用意（notesもここで決定）
-    const fallback = useMemo(() => genScoreFallbackBullets({ categories: data.categories, flags: data.flags }), [data]);
+    // スコア由来のフォールバック（notes 含む）
+    const fallback = useMemo(
+      () => genScoreFallbackBullets({ categories: data.categories, flags: data.flags }),
+      [data.categories, data.flags]
+    );
 
-    // page.tsx から来た personalComments があればそれを優先
+    // 個別コメントの優先順位：personalComments > fallback
     const strengths = data.personalComments?.talents?.length
       ? data.personalComments.talents
       : fallback.strengths;
+
     const improvements = data.personalComments?.challenges?.length
       ? data.personalComments.challenges
       : fallback.improvements;
+
     const personal = { strengths, improvements, notes: fallback.notes };
+
+    // 兜画像（型が一致しているのでそのまま添字アクセスOK）
+    const kabutoSrc = kabutoSrcByType[data.samuraiType] ?? '/images/kabuto/oda.svg';
 
     return (
       <div ref={ref} id="print-root" className="printable-root">
-        {/* ヘッダ */}
-        <header className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <Crown className="w-6 h-6" /> {data.samuraiType} レポート
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">結果ID：{data.resultId}</p>
+        {/* === ヘッダ（兜＋タイトル／右上：IOTロゴ） === */}
+        <header className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <img
+              src={kabutoSrc}
+              alt={`${data.samuraiType} の兜`}
+              className="h-12 w-12 object-contain shrink-0"
+            />
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+                {data.samuraiType} レポート
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">結果ID：{data.resultId}</p>
+            </div>
           </div>
+          <img
+            src="/images/logo.png"
+            alt="IOT ロゴ"
+            className="h-8 w-auto opacity-90"
+          />
         </header>
 
         {/* レーダーチャート */}
@@ -130,9 +153,9 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
                   <Smile className="w-5 h-5" /> {data.samuraiType} とは？
                 </h2>
                 <p className="text-base font-medium">{common.headline}</p>
-                {detail?.description ? (
+                {detail?.description && (
                   <p className="text-sm leading-6 text-muted-foreground">{detail.description}</p>
-                ) : null}
+                )}
               </CardContent>
             </Card>
           );
@@ -142,6 +165,7 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
         {(() => {
           const detail = TYPE_CONTENTS[data.samuraiType];
           if (!detail) return null;
+
           return (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
@@ -178,14 +202,14 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
                 </CardContent>
               </Card>
 
-              {detail.growthStory ? (
+              {detail.growthStory && (
                 <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
                   <CardContent className="p-6 space-y-2">
                     <h3 className="font-semibold">〔現代における成長ストーリー〕</h3>
                     <p className="text-sm leading-7 text-muted-foreground">{detail.growthStory}</p>
                   </CardContent>
                 </Card>
-              ) : null}
+              )}
 
               {detail.actionPlan?.length ? (
                 <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
@@ -200,13 +224,12 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
                 </Card>
               ) : null}
 
-              {detail.connector ? (
-                <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
-                  <CardContent className="p-6">
-                    <p className="text-sm leading-7">{detail.connector}</p>
-                  </CardContent>
-                </Card>
-              ) : null}
+              {/* connector（枠なし・通常段落で表示） */}
+              {detail.connector && (
+                <p className="mt-6 text-sm leading-7 text-gray-600">
+                  {detail.connector}
+                </p>
+              )}
             </>
           );
         })()}
@@ -255,21 +278,14 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
           </Card>
         )}
 
-        {/* === ここから：PDFにも載るCTA & オープンチャット === */}
-        <Card className="rounded-2xl border-dashed mt-6 break-inside-avoid print:border">
-          <CardContent className="p-6">
-            <h3 className="font-semibold mb-2">次の一手を一緒に設計しませんか？</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              無料相談（最短30分）で、あなた専用の90日アクションを具体化します。
-            </p>
-            <Link href={`/consult/start?resultId=${data.resultId}`} className="inline-block">
-              <Button size="lg" className="rounded-2xl shadow">
-                無料相談に進む（最短1分で予約）
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+        {/* === CTA（PDFにも載る）：会社規模で分岐表示 === */}
+        <ReportCTA
+          resultId={data.resultId}
+          companySize={data.companySize}
+          downloadUrl={`/report?resultId=${encodeURIComponent(data.resultId)}`}
+        />
 
+        {/* オープンチャット告知（共通） */}
         <Card className="rounded-2xl border shadow-sm mt-6 break-inside-avoid print:border">
           <CardContent className="p-6 flex flex-col sm:flex-row items-center gap-5">
             <div className="flex-1">
@@ -302,7 +318,6 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
               className="shrink-0"
               aria-label="LINEオープンチャットに参加する"
             >
-              {/* ← QR 画像パスを正式版に修正 */}
               <img
                 src="/images/qr-openchat.jpg"
                 alt="LINEオープンチャットQRコード"
@@ -314,7 +329,6 @@ const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
             </a>
           </CardContent>
         </Card>
-        {/* === ここまで：PDFにも載るCTA & オープンチャット === */}
 
         <footer className="pt-6 text-center text-xs text-muted-foreground">
           © 2025 一般社団法人 企業の未来づくり研究所
@@ -348,7 +362,12 @@ export default function ReportTemplate({ data }: { data: ReportInput }) {
         {/* 画面用ヘッダ（印刷時は非表示） */}
         <header className="flex items-center justify-between no-print">
           <div />
-          <Button size="sm" className="rounded-2xl shadow" onClick={handlePrint} aria-label="PDFをダウンロード">
+          <Button
+            size="sm"
+            className="rounded-2xl shadow"
+            onClick={handlePrint}
+            aria-label="PDFをダウンロード"
+          >
             <Download className="w-4 h-4 mr-2" />
             PDFをダウンロード
           </Button>
