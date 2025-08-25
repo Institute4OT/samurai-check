@@ -1,4 +1,5 @@
-// スコア集計システム
+// lib/scoringSystem.ts
+// スコア集計システム（質問ごとの上限 cap と重み weight 対応）
 
 export interface CategoryScores {
   "アップデート力": number;
@@ -12,7 +13,42 @@ export interface CategoryScores {
 import { questionCategoryMap } from "@/lib/questionCategoryMap";
 import { quizQuestions } from "@/lib/quizQuestions";
 
-// 各カテゴリの最大スコアを計算する関数
+/**
+ * 複数選択の“取り放題”歪み防止：設問ごとの合計に上限を掛ける。
+ * A) 分解能アップのため、学習系の複数選択Qは cap=4 に微調整
+ */
+const QUESTION_SCORE_CAPS: Record<string, number> = {
+  Q1: 3,
+  Q4: 3,
+  Q5: 4,  // ↑UP
+  Q6: 3,
+  Q8: 4,  // ↑UP
+  Q9: 4,  // ↑UP
+  Q12: 4, // ↑UP
+  Q13: 4, // ↑UP
+};
+
+/**
+ * 設問ごとの重み（分子＝実スコア、分母＝最大スコアの両方に適用）
+ * B) 社長の意思系（Q2/Q10/Q14）をやや強調
+ */
+const QUESTION_WEIGHTS: Record<string, number> = {
+  Q2: 1.15,
+  Q10: 1.15,
+  Q14: 1.25,
+};
+
+const getQuestionWeight = (qKey: string) =>
+  typeof QUESTION_WEIGHTS[qKey] === "number" ? QUESTION_WEIGHTS[qKey] : 1;
+
+/** 設問の“最大得点”を取得（capがあれば cap、なければ選択肢最大） */
+function getPerQuestionMaxScore(qKey: string, optionScores: number[]): number {
+  const cap = QUESTION_SCORE_CAPS[qKey];
+  const maxOption = optionScores.length ? Math.max(...optionScores) : 0;
+  return typeof cap === "number" ? cap : maxOption;
+}
+
+/** カテゴリ別の最大スコア（正規化の分母）を計算：cap＆weight 反映版 */
 export function calculateMaxScoresPerCategory(): CategoryScores {
   const maxScores: CategoryScores = {
     "アップデート力": 0,
@@ -23,31 +59,31 @@ export function calculateMaxScoresPerCategory(): CategoryScores {
     "権限委譲・構造健全度": 0,
   };
 
-  // 各質問について、そのカテゴリの最大スコアを加算
-  quizQuestions.forEach(question => {
+  quizQuestions.forEach((question) => {
     const qKey = `Q${question.id}`;
-    const categories = questionCategoryMap[qKey];
-    
-    if (categories) {
-      // その質問の最大スコアを取得
-      const maxQuestionScore = Math.max(...question.options.map(option => option.score));
-      
-      // カテゴリごとに分配（複数カテゴリの場合は等分）
-      const scorePerCategory = maxQuestionScore / categories.length;
-      
-      categories.forEach(category => {
-        if (category in maxScores) {
-          maxScores[category as keyof CategoryScores] += scorePerCategory;
-        }
-      });
-    }
+    const cats = questionCategoryMap[qKey];
+    if (!cats || cats.length === 0) return;
+
+    const optionScores = question.options.map((o) => o.score);
+    const qMax = getPerQuestionMaxScore(qKey, optionScores);
+    const w = getQuestionWeight(qKey);
+    const weightedMax = qMax * w;
+
+    const perCat = weightedMax / cats.length;
+    cats.forEach((cat) => {
+      if (cat in maxScores) {
+        maxScores[cat as keyof CategoryScores] += perCat;
+      }
+    });
   });
 
   return maxScores;
 }
 
-export function calculateCategoryScores(responses: { questionId: number; selectedAnswers: string[] }[]): CategoryScores {
-  // 初期化：すべてのカテゴリスコアを0に
+/** 実スコア（cap＆weight適用）→ カテゴリ配分 → 0〜3に正規化 */
+export function calculateCategoryScores(
+  responses: { questionId: number; selectedAnswers: string[] }[]
+): CategoryScores {
   const categorySums: CategoryScores = {
     "アップデート力": 0,
     "コミュ力誤差": 0,
@@ -59,56 +95,48 @@ export function calculateCategoryScores(responses: { questionId: number; selecte
 
   responses.forEach(({ questionId, selectedAnswers }) => {
     const qKey = `Q${questionId}`;
-    const categories = questionCategoryMap[qKey];
+    const cats = questionCategoryMap[qKey];
+    if (!cats || cats.length === 0) return;
 
-    if (!categories) {
-      console.warn(`カテゴリが見つかりません: ${qKey}`);
-      return;
-    }
+    // 安全網：「該当するものはない」が他と混在したらそれだけ残す
+    const none = selectedAnswers.find((a) => a === "該当するものはない");
+    if (none && selectedAnswers.length > 1) selectedAnswers = [none];
 
-    // 安全網: 「該当するものはない」が含まれている場合は、それだけを残す
-    const noneOption = selectedAnswers.find(ans => ans === "該当するものはない");
-    if (noneOption && selectedAnswers.length > 1) {
-      console.warn(`"${qKey}"で「該当するものはない」と他の選択肢が同時に選ばれていたため、排他処理を適用しました`);
-      selectedAnswers = [noneOption];
-    }
+    const q = quizQuestions.find((qq) => qq.id === questionId);
+    if (!q) return;
 
-    // 該当する質問データを取得
-    const questionData = quizQuestions.find(q => q.id === questionId);
-    if (!questionData) {
-      console.warn(`質問データが見つかりません: Q${questionId}`);
-      return;
-    }
+    // 設問の cap / weight
+    const optionScores = q.options.map((o) => o.score);
+    const qMax = getPerQuestionMaxScore(qKey, optionScores);
+    const w = getQuestionWeight(qKey);
 
-    // 選択されたテキストに対応するスコアを取得
-    let totalScore = 0;
-    selectedAnswers.forEach(selectedText => {
-      const matchingOption = questionData.options.find(option => option.text === selectedText);
-      if (matchingOption) {
-        totalScore += matchingOption.score;
-      } else {
-        console.warn(`選択肢が見つかりません: "${selectedText}" in Q${questionId}`);
+    // 合計 → cap → weight
+    let total = 0;
+    selectedAnswers.forEach((sel) => {
+      const opt = q.options.find((o) => o.text === sel);
+      if (opt) total += opt.score;
+    });
+    const capped = Math.min(total, qMax);
+    const weighted = capped * w;
+
+    // カテゴリ配分
+    const perCat = weighted / cats.length;
+    cats.forEach((cat) => {
+      if (cat in categorySums) {
+        categorySums[cat as keyof CategoryScores] += perCat;
       }
     });
 
-    // デバッグ用ログ
-    console.log(`Q${questionId}: 選択肢=${selectedAnswers}, 合計スコア=${totalScore}, カテゴリ=${categories}`);
-
-    // カテゴリごとにスコアを分配
-    const scorePerCategory = totalScore / categories.length;
-
-    categories.forEach((category) => {
-      if (category in categorySums) {
-        categorySums[category as keyof CategoryScores] += scorePerCategory;
-      }
-    });
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `Q${questionId}: raw=${total}, cap=${qMax}, weight=${w}, used=${weighted}, cats=${cats}`
+      );
+    }
   });
 
-  // 各カテゴリの最大スコアを取得
+  // 正規化（0〜3）
   const maxScores = calculateMaxScoresPerCategory();
-
-  // 正規化: (実際のスコア ÷ 最大スコア) × 3 で0〜3点スケールに変換
-  const normalizedScores: CategoryScores = {
+  const normalized: CategoryScores = {
     "アップデート力": 0,
     "コミュ力誤差": 0,
     "ジェネギャップ感覚": 0,
@@ -117,23 +145,20 @@ export function calculateCategoryScores(responses: { questionId: number; selecte
     "権限委譲・構造健全度": 0,
   };
 
-  for (const category in categorySums) {
-    const total = categorySums[category as keyof CategoryScores];
-    const maxScore = maxScores[category as keyof CategoryScores];
-    
-    // 正規化: (実際のスコア ÷ 最大スコア) × 3 で0〜3点スケールに変換
-    const normalizedScore = maxScore > 0 ? (total / maxScore) * 3 : 0;
-    normalizedScores[category as keyof CategoryScores] = parseFloat(normalizedScore.toFixed(2));
+  (Object.keys(normalized) as (keyof CategoryScores)[]).forEach((k) => {
+    const total = categorySums[k];
+    const max = maxScores[k];
+    const v = max > 0 ? (total / max) * 3 : 0;
+    normalized[k] = parseFloat(v.toFixed(2));
+  });
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("カテゴリ別合計:", categorySums);
+    console.log("カテゴリ別最大:", maxScores);
+    console.log("カテゴリ別正規化:", normalized);
   }
 
-  // デバッグ用ログ
-  if (process.env.NODE_ENV !== 'production') {
-    console.log("カテゴリ別合計スコア:", categorySums);
-    console.log("カテゴリ別最大スコア:", maxScores);
-    console.log("カテゴリ別正規化スコア:", normalizedScores);
-  }
-
-  return normalizedScores;
+  return normalized;
 }
 
 export function debugScoreCalculation(responses: any[]): void {

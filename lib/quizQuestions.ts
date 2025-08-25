@@ -1,3 +1,5 @@
+// lib/quizQuestions.ts
+
 export interface QuizQuestion {
   id: number;
   questionText: string;
@@ -7,54 +9,64 @@ export interface QuizQuestion {
 }
 
 export const quizQuestions: QuizQuestion[] = [
+  // Q1（据え置き）
   {
     id: 1,
-    questionText: "Q1. 会議でこんな光景、見覚えありませんか？（複数選択）",
+    questionText:
+      'Q1. 自社の会議でよくあるパターンとは？（複数選択可・最大３つ）',
     options: [
-      { text: '自分が話す時間が長く、部下の発言が少ない', score: 0 },
-      { text: '意見を求めても、中々出てこない（シーンとしがち）', score: 0 },
-      { text: '会議で決めきれず「持ち帰り」が続く', score: 0 },
-      { text: '提案は出るが、結局自分の案で決まることが多い', score: 0 },
-      { text: '特に問題は感じておらず、活発な議論ができていると思う', score: 3 },
-      { text: '会議の場が"責任追及の場"になりがち', score: 0 },
-      { text: '会議では何も決まらず、報告だけで終わることが多い', score: 0 },
+      { text: '説明や指示が中心で、他メンバーの発言が少ない', score: 0 },
+      { text: '意見を求めてもなかなか出てこない', score: 1 },
+      { text: '議論は活発だが、長丁場／担当や期限が曖昧になりがち', score: 2 },
+      { text: 'トップや特定の人の案で決まることが多い', score: 1 },
+      { text: '特に問題は感じず、活発に議論できている', score: 3 },
+      { text: 'トラブル等の原因や経緯の追及に時間を費やすことが多い', score: 0 },
+      { text: '報告だけで終わる／議題なしの定例がある', score: 0 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 7.1,
+    progressPercentage: 6.3,
   },
+
+  // Q2（差し替え）
   {
     id: 2,
-    questionText: "Q2. 部下からの提案に対して、あなたがよく取る反応は？（単一選択）",
+    questionText:
+      'Q2. 新しい提案が上がってきた時、あなたはどのように関わることが多いですか？（単一選択）',
     options: [
-      { text: '「いいね！もっと詳しく聞かせてくれる？」', score: 3 },
-      { text: '「それ、費用はいくらかかるの？」', score: 1 },
-      { text: '「わかった。検討しておくよ（でも結局何もしない）」', score: 1 },
-      { text: '「今は忙しいからまた後で」', score: 0 },
-      { text: '「それは前例がないからダメ」', score: 0 },
-      { text: '「それは前にも誰かが言ったけど、うまくいかなかったよ」', score: 0 },
+      { text: '新しい提案は、却下することが多い', score: 0 },
+      { text: 'スピードの観点からも自分がすべて指示する', score: 0 },
+      { text: '最終的な判断は自分が行うが、一部は任せる', score: 1 },
+      { text: '担当者を決め、まずは小さく試してもらう', score: 2 },
+      { text: '関係部署と会議を設け、そこで決定する', score: 2 },
+      { text: '目的と制約を示すだけで、実行は全て任せる', score: 3 },
     ],
     isMultipleChoice: false,
-    progressPercentage: 14.3,
+    progressPercentage: 12.5,
   },
+
+  // Q3（差し替え）
   {
     id: 3,
-    questionText: 'Q3. 意思決定に関して、社内でこんな声が"漏れ聞こえてくる"ことはありませんか？（単一選択）',
+    questionText:
+      'Q3. 新しい技術や市場のトレンドについて、あなたのスタンスは？（単一選択）',
     options: [
-      { text: 'ウチの社長は決断が早くて助かる', score: 3 },
-      { text: '結局、また話が変わった', score: 0 },
-      { text: 'あの部門／人は社長に直接つながっているから特別扱いだ', score: 0 },
-      { text: '誰が決めるのかわからない／責任の所在があいまいだ', score: 0 },
-      { text: '結局根回しなんだよな…', score: 0 },
-      { text: '会議の後に「もっといいアイデアあったんだけどね…」という声がチラホラ', score: 1 },
-      { text: '会議の結果が納得できる', score: 3 },
-      { text: 'そういう声は特に耳に入ってこない', score: 2 }
+      { text: '流行には乗らない。既存のやり方を優先', score: 0 },
+      { text: '自社の伝統は大切にしつつ、部分的に新しいことにも関心を持つ', score: 1 },
+      {
+        text: '他社の成功事例を参考に、安全性を確認してから取り入れる', score: 1 },
+      { text: '新しいことは積極的に試すことが多い', score: 2 },
+      { text: '他社よりも早く、自社が新しいことを生み出したい', score: 3 },
+      { text: '異業種や全く違う分野の考え方から新しいヒントを探している', score: 3 },
     ],
     isMultipleChoice: false,
-    progressPercentage: 21.4,
+    progressPercentage: 18.8,
   },
+
+  // Q4（据え置き）
   {
     id: 4,
-    questionText: "Q4. 社員との関係について、次のうち当てはまるものをすべて選んでください（複数選択）",
+    questionText:
+      'Q4. 社員との関係について、次のうち当てはまるものをすべて選んでください（複数選択可・最大３つ）',
     options: [
       { text: '話といえば主に業務連絡で、プライベートな話は出ない', score: 0 },
       { text: 'ミスやトラブル報告が遅れて出てくる', score: 0 },
@@ -63,16 +75,19 @@ export const quizQuestions: QuizQuestion[] = [
       { text: '社員から気軽に声を掛けられる方だと思う', score: 2 },
       { text: '社員の顔と名前は一致しているが深くは知らない', score: 1 },
       { text: '一人ひとりの個性や強みまで把握している', score: 3 },
-      { text: '現場の社員たちの声を聴くことは自分にとっていい刺激になっている', score: 3 }
+      { text: '現場の社員たちの声を聴くことは自分にとっていい刺激になっている', score: 3 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 28.6,
+    progressPercentage: 25.0,
   },
+
+  // Q5（据え置き）
   {
     id: 5,
-    questionText: "Q5. あなたが会社経営で重視していることは？（複数回答可）",
+    questionText:
+      'Q5. あなたが会社経営で重視していることは？（複数選択可・最大３つ）',
     options: [
-      { text: '昔のやり方を大事にしている', score: 0 },
+      { text: 'これまでのやり方／前例を大事にしている', score: 0 },
       { text: '最終的には自分の勘で決める', score: 0 },
       { text: '経験や場数', score: 1 },
       { text: 'データや外部環境の変化', score: 3 },
@@ -80,90 +95,105 @@ export const quizQuestions: QuizQuestion[] = [
       { text: 'SDGsや社会課題への貢献', score: 2 },
       { text: '多様性や人権意識（ダイバーシティなど）', score: 2 },
       { text: '地域・社会との共生', score: 2 },
-      { text: '外部の専門家によるアドバイス', score: 1 }
+      { text: '外部の専門家によるアドバイス', score: 1 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 35.7,
+    progressPercentage: 31.3,
   },
+
+  // Q6（差し替え）
   {
     id: 6,
-    questionText: "Q6. こんなセリフ、言ったことありませんか？（複数選択）",
+    questionText:
+      'Q6. 社員の働き方についてあなたが大切だと思うことは？（複数選択可・最大３つ）',
     options: [
-      { text: '昔は○○だった／オレの時代では○○だった', score: 0 },
-      { text: '『○○世代はさ〜』『女の子は』『男なら』などつい属性でくくってしまう', score: 0 },
-      { text: '何でもかんでも変えればいいってもんじゃない', score: 0 },
-      { text: '「普通は〜」「常識では〜」という言い回しをよく使う', score: 0 },
-      { text: '面白そうだね。まずはそれでいってみよう', score: 3 },
-      { text: '責任は私がとるから、自由にやっていいよ', score: 3 },
-      { text: 'なるほど、とりあえず話を聞かせてくれ', score: 2 },
-      { text: '（新しいことについて）まずは自分でもやってみるよ', score: 3 }
+      { text: '仕事は遊びではないので、楽しくなくて当たり前', score: 0 },
+      { text: '社員は指示通り動いてくれればいい', score: 0 },
+      { text: '敬語や服装などの礼儀や上下関係の規律', score: 1 },
+      { text: 'ジョブローテーションで、幅広い視野とスキルを身につけること', score: 1 },
+      { text: '多様な働き方を積極的に取り入れたい', score: 2 },
+      { text: '自社の社員にこだわらず、外部の力も借りる', score: 2 },
+      { text: '一人ひとりが最大のパフォーマンスを発揮できること', score: 3 },
+      { text: '形式にこだわらず、互いに切磋琢磨して成長すること', score: 3 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 42.9,
+    progressPercentage: 37.5,
   },
+
+  // Q7（据え置き）
   {
     id: 7,
-    questionText: "Q7. 社内のDXやAI導入へのあなたの姿勢に近いものは？（単一選択）",
+    questionText:
+      'Q7. 社内のDXやAI導入へのあなたの姿勢に近いものは？（単一選択）',
     options: [
-      { text: '自ら旗振り役となってDXやAI導入を推進している', score: 3 },
-      { text: '詳しくない分野だが、信頼できる部下に任せている', score: 2 },
-      { text: '詳しくないので、とりあえず部下に丸投げしている', score: 1 },
-      { text: '導入しているが、まだ十分に活用されていない', score: 1 },
-      { text: '正直よくわからない', score: 1 },
-      { text: '自分には関係ないと思っている', score: 0 }
+      { text: '先行導入して小さく回し、現場で運用改善を進めている', score: 3 },
+      { text: '計画立案・情報収集中で、試行・検証の準備をしている', score: 2 },
+      { text: '社内に抵抗勢力があり、導入には苦戦中', score: 1 },
+      { text: '重要性は理解しているが、他優先で着手できていない', score: 0 },
+      { text: '「自社の業界には関係ない」と考えている', score: 0 },
     ],
     isMultipleChoice: false,
-    progressPercentage: 50.0
+    progressPercentage: 43.8,
   },
+
+  // Q8（差し替え：単一選択に変更）
   {
     id: 8,
-    questionText: "Q8. 経営判断や指示に関して、社内でこんな声が\"聞こえてきた\"ことはありませんか？（複数選択）",
+    questionText:
+      'Q8. 組織のビジョンやミッションを社員に伝えるために、どのようなことをしていますか？（単一選択）',
     options: [
-      { text: 'また方針転換か…', score: 0 },
-      { text: '上は現場のことをわかってないよな', score: 0 },
-      { text: 'ちょっと発言しにくい', score: 1 },
-      { text: '現場のことも考えてくれてる', score: 3 },
-      { text: '指示が明確で迷わず動ける', score: 3 },
-      { text: '実際に派遣社員や若手の声もまんべんなく聞こえてくる', score: 3 },
-      { text: 'ウチの会社は挑戦しやすい', score: 3 },
-      { text: '該当するものはない', score: 0 }
+      { text: '事業特性上、あえて明文化はしていない', score: 0 },
+      { text: 'Webサイトや冊子への掲載、社内掲示等で周知', score: 0 },
+      { text: '朝礼で唱和し、浸透をはかっている', score: 1 },
+      { text: '現場の業務にどう活かすべきか、社員たちと考える場を設けている', score: 2 },
+      { text: '時代や社会の変化に合わせて、社員と話し合いながら内容を見直している', score: 2 },
+      { text:
+          '社員が自ら「会社や自分たちのビジョン」について語り、行動できる状態になっている',
+        score: 3 },
     ],
-    isMultipleChoice: true,
-    progressPercentage: 57.1
+    isMultipleChoice: false,
+    progressPercentage: 50.0,
   },
+
+  // Q9（据え置き）
   {
     id: 9,
-    questionText: "Q9. 最近、こんな現象はありませんか？（複数選択）",
+    questionText:
+      'Q9. 最近、こんな現象はありませんか？（複数選択可・最大３つ）',
     options: [
       { text: '以前は発言していた社員が、最近あまり発言しなくなった', score: 0 },
       { text: '気にかけていた社員が、何も言わずに辞めていった', score: 0 },
       { text: '最近、中間管理職の元気がないようだ', score: 1 },
       { text: 'アイデアは出るが、実現まで至らないことが多い', score: 2 },
-      { text: '若手が会議で積極的に自分の考えを話している', score: 3 },
+      { text: '性別等の属性の壁を越え、社員たちが積極的に自分の考えを話している', score: 3 },
       { text: '「この会社で挑戦したい」と言ってくれる社員がいる', score: 3 },
       { text: '部門を越えた対話やアイデアの共有が起きている', score: 3 },
-      { text: '上司に対しても率直なフィードバックが出てくる空気がある', score: 3 }
+      { text: '上司に対しても率直なフィードバックが出てくる空気がある', score: 3 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 64.3
+    progressPercentage: 56.3,
   },
+
+  // Q10（据え置き）
   {
     id: 10,
-    questionText: "Q10. あなた自身の「変わる覚悟」についてどう思いますか？（単一選択）",
+    questionText: 'Q10. 変革に対するあなた自身の「変わる覚悟」は？（単一選択）',
     options: [
-      { text: '常に変わり続ける覚悟を持っている', score: 3 },
-      { text: '必要になったら変わるつもりでいる', score: 2 },
-      { text: '頭ではわかっているけど、なかなか行動できていない', score: 2 },
+      { text: 'まず自分が変わる覚悟で行動している／始めている', score: 3 },
+      { text: '頭では理解し、部分的に着手しているが継続が課題', score: 2 },
       { text: '変わることは大事だと思うが、今のやり方でも大きな問題は感じていない', score: 1 },
-      { text: '自分が変わらないと会社が変われないとは思っていない', score: 0 },
-      { text: '自分ではなく、部下が変わるべきだと思う', score: 0 }
+      { text: '必要になったら変わるつもりでいる', score: 0 },
+      { text: '世代交代の観点からも、まずは現場主導で変わるのが望ましいと思う', score: 0 },
     ],
     isMultipleChoice: false,
-    progressPercentage: 71.4
+    progressPercentage: 62.5,
   },
+
+  // Q11（据え置き）
   {
     id: 11,
-    questionText: "Q11. あなたは社員に対して、どのような気持ちで接していますか？（単一選択）",
+    questionText:
+      'Q11. あなたは社員に対して、どのような気持ちで接していますか？（単一選択）',
     options: [
       { text: '正直、もっといい人材が欲しい', score: 0 },
       { text: '働きぶりを常に確認できる仕組みを導入している', score: 0 },
@@ -171,54 +201,97 @@ export const quizQuestions: QuizQuestion[] = [
       { text: '基本的に信用しているが、重要なところは自分が握っている', score: 1 },
       { text: '社員にもよるが、任せられる人には任せている', score: 2 },
       { text: '任せてはいるが、心のどこかで不安を感じている', score: 2 },
-      { text: 'うまくいかないことも含めて、社員を信じて任せている', score: 3 }
+      { text: 'うまくいかないことも含めて、社員を信じて任せている', score: 3 },
     ],
     isMultipleChoice: false,
-    progressPercentage: 78.6
+    progressPercentage: 68.8,
   },
+
+  // Q12（差し替え）
   {
     id: 12,
-    questionText: "Q12. 退職した社員について、こんな傾向ありませんか？（複数選択）",
+    questionText:
+      'Q12. ここ数年、社員の離職や休職にどのような傾向を感じていますか？（複数選択可・最大３つ）',
     options: [
-      { text: 'うちに残ってほしい人ほど、あっさり辞めていく', score: 0 },
-      { text: '辞める前に相談されたことがない（あるいは相談が形だけ）', score: 0 },
       { text: '退職代行を使う社員が出てきた', score: 0 },
+      { text: 'メンタル不調による退職者／休職者が一定数いる', score: 0 },
+      { text: '若手ほどあっさり辞めていく傾向がある', score: 0 },
       { text: '退職理由は「介護」「出産」「スキルアップ」などが多い', score: 1 },
-      { text: 'そもそも退職者は滅多にいない', score: 3 },
-      { text: '辞める前に、どうにか続けられないかと相談されたことがある', score: 3 },
-      { text: '退職後も連絡をくれたり、イベントに顔を出してくれたりする人がいる', score: 3 },
-      { text: '退職しても、今も連携して一緒に仕事している人がいる', score: 3 }
+      { text: '退職後もイベントに参加してくれる等ゆるく繋がっている人がいる', score: 2 },
+      { text: '退職後、業務委託などで今も一緒に仕事をしている人がいる', score: 3 },
+      { text: '社員が辞めることは滅多にない', score: 3 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 85.7
+    progressPercentage: 75.0,
   },
+
+  // Q13（据え置き）
   {
     id: 13,
-    questionText: "Q13. あなたの会社での意思決定で、当てはまるものを全て選んでください（複数選択）",
+    questionText:
+      'Q13. あなたの会社での意思決定で、当てはまるものを全て選んでください（複数選択可・最大３つ）',
     options: [
-      { text: '幹部会や合議制はあるが、社長（または強い役員）が結論を翻すことがある', score: 0 },
+      { text: '合議制はあるが、社長／強い役員が結論を翻すことがある', score: 0 },
       { text: '自分の判断でプロジェクトを止めたり動かしたりすることがある', score: 0 },
       { text: '大きな投資でも相談なく独断で決めることがある', score: 0 },
       { text: '決裁は会議より「根回し」で決まることが多い', score: 1 },
       { text: '最終判断は社長まで上がるが、現場の声も反映される', score: 2 },
       { text: '意思決定はルールとプロセスに基づいて行われている', score: 3 },
       { text: '会議で意見を出し合い、納得した上で合意が形成されている', score: 3 },
-      { text: '部署やチームに意思決定を委ねる場面が増えてきた', score: 3 }
+      { text: '部署やチームに意思決定を委ねる場面が増えてきた', score: 3 },
     ],
     isMultipleChoice: true,
-    progressPercentage: 92.9
+    progressPercentage: 81.3,
   },
- {
+
+  // Q14（据え置き）
+  {
     id: 14,
-    questionText: "Q14. あなたが不在でも、会社が回る体制になっていますか？（単一選択）",
+    questionText:
+      'Q14. あなたが不在でも、会社が回る体制になっていますか？（単一選択）',
     options: [
       { text: '現状では、自分抜きではどうにもならない', score: 0 },
       { text: '一応、幹部はいるが最終判断は全部自分がしている', score: 1 },
       { text: '幹部が判断することもあるが、重要案件は自分の承認が必要', score: 2 },
       { text: '信頼できる右腕がいて、ほとんど任せている', score: 2 },
-      { text: '自分が不在でも、会社が問題なく回る体制になっている', score: 3 }
+      { text: '自分が不在でも、会社が問題なく回る体制になっている', score: 3 },
     ],
     isMultipleChoice: false,
-    progressPercentage: 100.0
-  }
+    progressPercentage: 87.5,
+  },
+
+  // Q15（新規）
+  {
+    id: 15,
+    questionText:
+      'Q15. 日常コミュニケーションで、プライベートや属性に関わる話題はどう扱うことが多いですか？（単一選択）',
+    options: [
+      { text: '仕事に集中したいので、職場での話題＝仕事関係のみに限定', score: 0 },
+      { text: 'ざっくばらんな関係が大事。プライベートなことにも遠慮なく触れる', score: 0 },
+      { text: 'プライベートな話題は相手が自ら言及した場合のみOK', score: 1 },
+      { text: '同意のないプライベート質問や属性コメントは避ける運用にしている', score: 2 },
+      { text: '属性・家庭・妊娠等のNGガイドを置き、役職者向けトレーニングを回している', score: 3 },
+    ],
+    isMultipleChoice: false,
+    progressPercentage: 93.8,
+  },
+
+  // Q16（新規）
+  {
+    id: 16,
+    questionText:
+      'Q16. あなたの組織のハラスメント相談窓口等の人事運用について、該当するものは？（複数選択可・最大３つ）',
+    options: [
+      { text: '相談は社長や直属の上長が受けるのが基本', score: 0 },
+      { text: '性別で異なる服装/制服などの慣行が残っている', score: 0 },
+      { text: '相談は社内の特定者（担当者）が受ける体制で、見直しを進めている', score: 1 },
+      { text: '管理職は男性が多いが、改善しようとしている',  score: 1 },
+      { text: '社内に複数（直属以外）の相談窓口を設置している', score: 2 },
+      { text: '性別によらない評価/昇格基準の明文化あり', score: 2 },
+      { text: '相談窓口は、外部を含み複線化している。', score: 3 },
+      { text: '昇格・配置の公平性を定期モニターしている（例：女性管理職比率）', score: 3 },
+    ],
+    isMultipleChoice: true,
+    progressPercentage: 100.0,
+  },
 ];
