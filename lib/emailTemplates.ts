@@ -1,9 +1,38 @@
 // lib/emailTemplates.ts
-// 既存：詳細レポ申込者向け（レポートURL + 申込者限定の無料相談を案内）
+// メール本文（テキスト/HTML）を生成するユーティリティ群
+// - ベースURLは NEXT_PUBLIC_APP_URL を使用（末尾スラなし）
+// - レポートURLは /report/[resultId] の動的パスに統一
+// - 51名以上のメールは consultant（ishijima/morigami）でSPIRの予約URLを出し分け
+
+/* ================== 共通定数 ================== */
+
+const BRAND = 'IOT（企業の未来づくり研究所）';
+
+export const APP_URL = (
+  process.env.NEXT_PUBLIC_APP_URL ||
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+).replace(/\/+$/, '');
+
+// /report/[resultId]
+export const REPORT_URL = (id: string) => `${APP_URL}/report/${encodeURIComponent(id)}`;
+
+const SPIR_ISHIJIMA = process.env.SPIR_ISHIJIMA_URL?.trim();
+const SPIR_MORIGAMI  = process.env.SPIR_MORIGAMI_URL?.trim();
+
+export type Consultant = 'ishijima' | 'morigami' | undefined;
+export const bookingUrlFor = (c?: Consultant) =>
+  c === 'morigami' ? (SPIR_MORIGAMI || `${APP_URL}/consult`) :
+  c === 'ishijima' ? (SPIR_ISHIJIMA || `${APP_URL}/consult`) :
+  `${APP_URL}/consult`;
+
+const SHARE_URL = APP_URL;
+
+/* ================== 個別メール：詳細レポ案内 ================== */
+
 export function buildConsultEmail(params: {
   toName?: string;
-  reportUrl: string;
-  bookingUrl: string;
+  reportUrl: string;      // REPORT_URL(resultId)
+  bookingUrl: string;     // bookingUrlFor(consultant)
   lineUrl?: string;
   offerNote?: string;
 }) {
@@ -11,11 +40,11 @@ export function buildConsultEmail(params: {
     toName,
     reportUrl,
     bookingUrl,
-    lineUrl = "https://x.gd/9RRcN",
-    offerNote = "申込者限定・今月枠あり",
+    lineUrl = 'https://x.gd/9RRcN',
+    offerNote = '申込者限定・今月枠あり',
   } = params;
 
-  const greeting = toName ? `${toName} 様` : "ご担当者様";
+  const greeting = toName ? `${toName} 様` : 'ご担当者様';
   const subject = `【AI診断】詳細レポートのご案内（受付完了）｜${offerNote} 無料個別相談`;
 
   const signatureText = `
@@ -23,7 +52,7 @@ export function buildConsultEmail(params: {
 https://ourdx-mtg.com/
 お問合せ先：info@ourdx-mtg.com
 〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F
-`.trim();
+  `.trim();
 
   const text = `
 ${greeting}
@@ -36,19 +65,18 @@ ${reportUrl}
 
 ▼【特典】無料個別相談（${offerNote}）
 結果の読み解き／次の一手／90日アクション案まで一緒に詰めます。
-※申込者限定の特典です。今月枠の空きがあるうちにご予約ください。
 予約フォーム：
 ${bookingUrl}
 
 ―― 補足（情報配信）
-IOTの研修・組織開発に関する最新情報は、LINEオープンチャットで発信しています。
-https://x.gd/9RRcN
-※1:1のやり取りはできません／予約は不可です。ご相談は上記フォームから。
+IOTの最新情報は、LINEオープンチャットで発信しています。
+${lineUrl}
+※1:1のやり取りはできません／ご相談は上記フォームから。
 
 このメールへ直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
 
 ${signatureText}
-`.trim();
+  `.trim();
 
   const button = (href: string, label: string) => `
     <a href="${href}" target="_blank" rel="noopener"
@@ -64,7 +92,7 @@ ${signatureText}
      下記より内容をご確認ください。</p>
 
   <h3 style="margin:14px 0 6px;">▼レポート確認</h3>
-  <p>${button(reportUrl, "レポートを開く")}</p>
+  <p>${button(reportUrl, 'レポートを開く')}</p>
   <p style="margin:6px 0;color:#374151;font-size:14px;">URL：<a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>
 
   <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb;">
@@ -75,8 +103,7 @@ ${signatureText}
     <li>次の一手の設計</li>
     <li>90日アクション案（3つの打ち手＋計測指標）</li>
   </ul>
-  <p style="margin:6px 0 0;color:#ef4444;font-size:13px;">※申込者限定の特典です。今月枠の空きがあるうちにご予約ください。</p>
-  <p>${button(bookingUrl, "無料個別相談を予約する")}</p>
+  <p>${button(bookingUrl, '無料個別相談を予約する')}</p>
   <p style="margin:6px 0;color:#374151;font-size:14px;">予約フォーム：<a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a></p>
 
   <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb;">
@@ -84,7 +111,7 @@ ${signatureText}
   <h3 style="margin:14px 0 6px;">▼最新情報の受け取り（任意）</h3>
   <p style="margin:6px 0;color:#374151;font-size:14px;">
     IOTの研修・組織開発に関する最新情報は、LINEオープンチャットで発信しています。<br>
-    <a href="https://x.gd/9RRcN" target="_blank" rel="noopener">https://x.gd/9RRcN</a><br>
+    <a href="${lineUrl}" target="_blank" rel="noopener">${lineUrl}</a><br>
     <small>※1:1のやり取りはできません／予約は不可です。ご相談は予約フォームをご利用ください。</small>
   </p>
 
@@ -103,31 +130,21 @@ ${signatureText}
   return { subject, text, html };
 }
 
-// ===== 受付メール：会社規模で分岐 =====
-const BRAND = 'IOT（企業の未来づくり研究所）';
-const SITE =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '') ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-
-const BOOKING_URL =
-  process.env.NEXT_PUBLIC_BOOKING_URL?.trim() || `${SITE}/consult`;
-
-const SHARE_URL =
-  process.env.NEXT_PUBLIC_SHARE_URL?.trim() || SITE;
+/* ================== 受付メール：会社規模で分岐 ================== */
 
 type CompanySize =
   | '1-10' | '11-50' | '51-100' | '101-300' | '301-500' | '501-1000' | '1001+';
 
-/** 申込者向け：受付完了（≤50はアンバサダー、≥51は無料相談案内） */
+/** 申込者向け：受付完了（≤50はアンバサダー、≥51は無料相談案内＋コンサル出し分け） */
 export function renderReportRequestMailToUser(args: {
   name: string;
   resultId?: string;
   companySize: CompanySize;
+  consultant?: Consultant; // 'ishijima' | 'morigami'
 }) {
   const isLarge = !['1-10', '11-50'].includes(args.companySize);
-  const reportUrl = args.resultId
-    ? `${SITE}/report?resultId=${encodeURIComponent(args.resultId)}`
-    : undefined;
+  const reportUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
+  const bookingUrl = bookingUrlFor(args.consultant);
 
   if (isLarge) {
     // 51名以上：無料相談の案内を同梱
@@ -138,14 +155,14 @@ ${args.name} 様
 詳細レポートのお申込みを受け付けました。
 担当よりご連絡差し上げます。
 
-${reportUrl ? `▼レポート確認\n${reportUrl}\n` : ''}▼無料個別相談（読み解き／次の一手／90日アクション案）
-${BOOKING_URL}
+${reportUrl ? `▼レポート確認\n${reportUrl}\n\n` : ''}▼無料個別相談（読み解き／次の一手／90日アクション案）
+${bookingUrl}
 
 このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
 
 ${BRAND}
 https://ourdx-mtg.com/
-`.trim();
+    `.trim();
 
     const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
@@ -153,7 +170,7 @@ https://ourdx-mtg.com/
       <p>詳細レポートのお申込みを受け付けました。担当よりご連絡差し上げます。</p>
       ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
       <p>▼無料個別相談（読み解き／次の一手／90日アクション案）<br/>
-        <a href="${BOOKING_URL}" target="_blank" rel="noopener">${BOOKING_URL}</a>
+        <a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a>
       </p>
       <p>このメールにご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。</p>
       <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
@@ -170,7 +187,7 @@ https://ourdx-mtg.com/
 ${args.name} 様
 
 詳細レポートのお申込みを受け付けました。
-${reportUrl ? `▼レポート確認\n${reportUrl}\n` : ''}　
+${reportUrl ? `▼レポート確認\n${reportUrl}\n\n` : ''}
 小さな団体の取り組みです。もし価値があれば、経営者仲間へ共有いただけると嬉しいです。
 
 ▼紹介用リンク
@@ -180,7 +197,7 @@ ${SHARE_URL}
 
 ${BRAND}
 https://ourdx-mtg.com/
-`.trim();
+  `.trim();
 
   const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
@@ -198,7 +215,8 @@ https://ourdx-mtg.com/
   return { subject, text, html };
 }
 
-/** 運用(IOT)向け：申込内容通知 */
+/* ================== 運用(IOT)向け：申込内容通知 ================== */
+
 export function renderReportRequestMailToOps(args: {
   email: string;
   name: string;
@@ -220,7 +238,7 @@ export function renderReportRequestMailToOps(args: {
 会社規模: ${args.companySize}
 業種: ${args.industry}
 診断ID: ${args.resultId || '-'}
-`.trim();
+  `.trim();
 
   const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">

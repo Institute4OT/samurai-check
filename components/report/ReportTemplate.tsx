@@ -16,12 +16,17 @@ import {
 } from 'recharts';
 
 import { TYPE_CONTENTS } from '@/lib/report/typeContents';
-// 兜マップと型を共通化
 import { kabutoSrcByType, SamuraiLabel } from '@/lib/report/kabutoMap';
-// CTA（会社規模によって表示内容が変わる）
 import ReportCTA from './ReportCTA';
-// スコア由来のフォールバック生成
 import { genScoreFallbackBullets } from '@/lib/report/personalization';
+
+// 日本語⇄英字キーのブリッジ
+import {
+  JA_TO_KEY,
+  KEY_TO_JA,
+  type SamuraiJa,
+  type SamuraiKey,
+} from '@/lib/samuraiTypeMap';
 
 /* ========= 型 ========= */
 export type CategoryKey =
@@ -31,9 +36,6 @@ export type CategoryKey =
   | 'updatePower'
   | 'genGap'
   | 'harassmentRisk';
-
-// ← ここが重要：SamuraiLabel をそのまま再利用（重複定義しない）
-export type SamuraiType = SamuraiLabel;
 
 export type CategoryScore = {
   key: CategoryKey;
@@ -48,16 +50,16 @@ export type PersonalComments = {
 
 export type ReportInput = {
   resultId: string;
-  samuraiType: SamuraiType;
+  /** 日本語名（「織田信長型」）でも英字キー（'oda'）でもOK */
+  samuraiType: SamuraiJa | SamuraiKey;
   categories: CategoryScore[];
   flags?: { manyZeroOnQ5?: boolean; noRightHand?: boolean };
   personalComments?: PersonalComments;
-  // CTA 分岐用（任意）
-  companySize?: string;
+  companySize?: string; // CTA 分岐用（任意）
 };
 
-/* ========= キャッチ（headline のみ使用） ========= */
-const COMMON_BY_TYPE: Record<SamuraiType, { headline: string }> = {
+/* ========= キャッチ（headline のみ使用／日本語名キー） ========= */
+const COMMON_BY_TYPE: Record<SamuraiJa, { headline: string }> = {
   今川義元型: { headline: '旧体制に安住しがちな安定志向タイプ' },
   織田信長型: { headline: '革新を突き進むトップダウン型' },
   豊臣秀吉型: { headline: '共創と巻き込みで勢いを生むタイプ' },
@@ -67,283 +69,288 @@ const COMMON_BY_TYPE: Record<SamuraiType, { headline: string }> = {
   徳川家康型: { headline: '慎重に構造を整える守りの型' },
 };
 
-/* ========= 印刷する中身 ========= */
-const Printable = React.forwardRef<HTMLDivElement, { data: ReportInput }>(
-  ({ data }, ref) => {
-    const common = COMMON_BY_TYPE[data.samuraiType];
+/* ========= ヘルパー ========= */
+const SAMURAI_KEYS: SamuraiKey[] = [
+  'sanada', 'oda', 'hideyoshi', 'ieyasu', 'uesugi', 'saito', 'imagawa',
+];
+const isKey = (v: any): v is SamuraiKey => SAMURAI_KEYS.includes(v);
 
-    const chartData = useMemo(
-      () => data.categories.map((c) => ({
+/* ========= レポート本文（refは親で持つ） ========= */
+function ReportBody({ data }: { data: ReportInput }) {
+  // 1) タイプ名を正規化（key/ja の両方を用意）
+  const { typeKey, typeJa } = useMemo(() => {
+    const raw = data.samuraiType as SamuraiJa | SamuraiKey;
+    const key: SamuraiKey = isKey(raw) ? raw : (JA_TO_KEY[raw as SamuraiJa] ?? 'oda');
+    const ja: SamuraiJa = KEY_TO_JA[key] ?? '織田信長型';
+    return { typeKey: key, typeJa: ja };
+  }, [data.samuraiType]);
+
+  // 2) レーダー用データ
+  const chartData = useMemo(
+    () =>
+      data.categories.map((c) => ({
         subject: c.label,
         score: Math.max(0, Math.min(3, c.score)),
       })),
-      [data.categories]
-    );
+    [data.categories]
+  );
 
-    // スコア由来のフォールバック（notes 含む）
-    const fallback = useMemo(
-      () => genScoreFallbackBullets({ categories: data.categories, flags: data.flags }),
-      [data.categories, data.flags]
-    );
+  // 3) スコア由来のフォールバック（notes 含む）
+  const fallback = useMemo(
+    () => genScoreFallbackBullets({ categories: data.categories, flags: data.flags }),
+    [data.categories, data.flags]
+  );
 
-    // 個別コメントの優先順位：personalComments > fallback
-    const strengths = data.personalComments?.talents?.length
-      ? data.personalComments.talents
-      : fallback.strengths;
+  // 4) 個別コメントの優先順位：personalComments > fallback
+  const strengths = data.personalComments?.talents?.length
+    ? data.personalComments.talents
+    : fallback.strengths;
 
-    const improvements = data.personalComments?.challenges?.length
-      ? data.personalComments.challenges
-      : fallback.improvements;
+  const improvements = data.personalComments?.challenges?.length
+    ? data.personalComments.challenges
+    : fallback.improvements;
 
-    const personal = { strengths, improvements, notes: fallback.notes };
+  const personal = { strengths, improvements, notes: fallback.notes };
 
-    // 兜画像（型が一致しているのでそのまま添字アクセスOK）
-    const kabutoSrc = kabutoSrcByType[data.samuraiType] ?? '/images/kabuto/oda.svg';
+  // 5) 兜画像・タイプ別本文（どちらも日本語ラベルの辞書）
+  const typeJaForDict = typeJa as unknown as SamuraiLabel;
+  const kabutoSrc = kabutoSrcByType[typeJaForDict] ?? '/images/kabuto/oda.svg';
+  const detail = TYPE_CONTENTS[typeJaForDict];
 
-    return (
-      <div ref={ref} id="print-root" className="printable-root">
-        {/* === ヘッダ（兜＋タイトル／右上：IOTロゴ） === */}
-        <header className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <img
-              src={kabutoSrc}
-              alt={`${data.samuraiType} の兜`}
-              className="h-12 w-12 object-contain shrink-0"
-            />
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-                {data.samuraiType} レポート
-              </h1>
-              <p className="text-sm text-muted-foreground mt-1">結果ID：{data.resultId}</p>
-            </div>
-          </div>
+  // 6) 見出し（日本語名で参照）
+  const common = COMMON_BY_TYPE[typeJa];
+
+  return (
+    <div id="print-root" className="printable-root">
+      {/* === ヘッダ（兜＋タイトル／右上：IOTロゴ） === */}
+      <header className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
           <img
-            src="/images/logo.png"
-            alt="IOT ロゴ"
-            className="h-8 w-auto opacity-90"
+            src={kabutoSrc}
+            alt={`${typeJa} の兜`}
+            className="h-12 w-12 object-contain shrink-0"
           />
-        </header>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+              {typeJa} レポート
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              結果ID：{data.resultId}
+            </p>
+          </div>
+        </div>
+        <img src="/images/logo.png" alt="IOT ロゴ" className="h-8 w-auto opacity-90" />
+      </header>
 
-        {/* レーダーチャート */}
-        <Card className="rounded-2xl border shadow-sm mt-3 break-inside-avoid">
-          <CardContent className="px-6 py-4">
-            <h2 className="text-base sm:text-lg font-semibold mb-2 flex items-center gap-2">
-              <Compass className="w-5 h-5" /> スコア可視化（0–3）
-            </h2>
-            <div className="w-full h-56 sm:h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="subject" />
-                  <PolarRadiusAxis angle={30} domain={[0, 3]} />
-                  <Radar name="Score" dataKey="score" stroke="#6366f1" fill="#6366f1" fillOpacity={0.35} />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+      {/* レーダーチャート */}
+      <Card className="rounded-2xl border shadow-sm mt-3 break-inside-avoid">
+        <CardContent className="px-6 py-4">
+          <h2 className="text-base sm:text-lg font-semibold mb-2 flex items-center gap-2">
+            <Compass className="w-5 h-5" /> スコア可視化（0–3）
+          </h2>
+          <div className="w-full h-56 sm:h-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
+                <PolarGrid />
+                <PolarAngleAxis dataKey="subject" />
+                <PolarRadiusAxis angle={30} domain={[0, 3]} />
+                <Radar name="Score" dataKey="score" stroke="#6366f1" fill="#6366f1" fillOpacity={0.35} />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* とは？（headline + description） */}
-        {(() => {
-          const detail = TYPE_CONTENTS[data.samuraiType];
-          return (
-            <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
-              <CardContent className="p-6 space-y-3">
-                <h2 className="text-lg font-semibold flex items-center gap-2">
-                  <Smile className="w-5 h-5" /> {data.samuraiType} とは？
-                </h2>
-                <p className="text-base font-medium">{common.headline}</p>
-                {detail?.description && (
-                  <p className="text-sm leading-6 text-muted-foreground">{detail.description}</p>
-                )}
+      {/* とは？（headline + description） */}
+      <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
+        <CardContent className="p-6 space-y-3">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Smile className="w-5 h-5" /> {typeJa} とは？
+          </h2>
+          <p className="text-base font-medium">{common?.headline}</p>
+          {detail?.description && (
+            <p className="text-sm leading-6 text-muted-foreground">{detail.description}</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* タイプ別 詳細 */}
+      {detail && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+            <Card className="rounded-2xl border shadow-sm break-inside-avoid">
+              <CardContent className="p-6 space-y-2">
+                <h3 className="font-semibold">〔長所〕</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  {detail.strengths.map((t: string, i: number) => (
+                    <li key={`st-${i}`} className="text-sm leading-6">{t}</li>
+                  ))}
+                </ul>
               </CardContent>
             </Card>
-          );
-        })()}
+            <Card className="rounded-2xl border shadow-sm break-inside-avoid">
+              <CardContent className="p-6 space-y-2">
+                <h3 className="font-semibold">〔落とし穴〕</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  {detail.pitfalls.map((t: string, i: number) => (
+                    <li key={`pf-${i}`} className="text-sm leading-6">{t}</li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          </div>
 
-        {/* タイプ別 詳細 */}
-        {(() => {
-          const detail = TYPE_CONTENTS[data.samuraiType];
-          if (!detail) return null;
-
-          return (
-            <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-                <Card className="rounded-2xl border shadow-sm break-inside-avoid">
-                  <CardContent className="p-6 space-y-2">
-                    <h3 className="font-semibold">〔長所〕</h3>
-                    <ul className="list-disc pl-5 space-y-1">
-                      {detail.strengths.map((t: string, i: number) => (
-                        <li key={`st-${i}`} className="text-sm leading-6">{t}</li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
-                <Card className="rounded-2xl border shadow-sm break-inside-avoid">
-                  <CardContent className="p-6 space-y-2">
-                    <h3 className="font-semibold">〔落とし穴〕</h3>
-                    <ul className="list-disc pl-5 space-y-1">
-                      {detail.pitfalls.map((t: string, i: number) => (
-                        <li key={`pf-${i}`} className="text-sm leading-6">{t}</li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
-                <CardContent className="p-6 space-y-2">
-                  <h3 className="font-semibold">〔伸ばすべきポイント〕</h3>
-                  <ol className="list-decimal pl-5 space-y-1">
-                    {detail.shouldFocus.map((t: string, i: number) => (
-                      <li key={`sf-${i}`} className="text-sm leading-6">{t}</li>
-                    ))}
-                  </ol>
-                </CardContent>
-              </Card>
-
-              {detail.growthStory && (
-                <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
-                  <CardContent className="p-6 space-y-2">
-                    <h3 className="font-semibold">〔現代における成長ストーリー〕</h3>
-                    <p className="text-sm leading-7 text-muted-foreground">{detail.growthStory}</p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {detail.actionPlan?.length ? (
-                <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
-                  <CardContent className="p-6 space-y-2">
-                    <h3 className="font-semibold">〔具体的なアクションプラン〕</h3>
-                    <ul className="list-disc pl-5 space-y-1">
-                      {detail.actionPlan.map((t: string, i: number) => (
-                        <li key={`ap-${i}`} className="text-sm leading-6">{t}</li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {/* connector（枠なし・通常段落で表示） */}
-              {detail.connector && (
-                <p className="mt-6 text-sm leading-7 text-gray-600">
-                  {detail.connector}
-                </p>
-              )}
-            </>
-          );
-        })()}
-
-        {/* 個別コメント（自分だけのパート） */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-          <Card className="rounded-2xl border shadow-sm break-inside-avoid">
-            <CardContent className="p-6 space-y-1">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Target className="w-5 h-5" /> あなたが持つ才能（ギフト）
-              </h3>
-              <p className="text-xs text-muted-foreground">※ あなたの回答から抽出した“いま効いている強み”</p>
-              <ul className="list-disc pl-5 space-y-1 mt-1">
-                {personal.strengths.map((t: string, i: number) => (
-                  <li key={`ps-${i}`} className="text-sm leading-6">{t}</li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl border shadow-sm break-inside-avoid">
-            <CardContent className="p-6 space-y-1">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Target className="w-5 h-5" /> 新たな挑戦のフィールド
-              </h3>
-              <p className="text-xs text-muted-foreground">※ 次の90日で磨くと効果が高いテーマ</p>
-              <ul className="list-disc pl-5 space-y-1 mt-1">
-                {personal.improvements.map((t: string, i: number) => (
-                  <li key={`pi-${i}`} className="text-sm leading-6">{t}</li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        </div>
-
-        {personal.notes.length > 0 && (
           <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
             <CardContent className="p-6 space-y-2">
-              <h3 className="font-semibold">補足メモ</h3>
-              <ul className="list-disc pl-5 space-y-1">
-                {personal.notes.map((n: string, i: number) => (
-                  <li key={`pn-${i}`} className="text-sm leading-6">{n}</li>
+              <h3 className="font-semibold">〔伸ばすべきポイント〕</h3>
+              <ol className="list-decimal pl-5 space-y-1">
+                {detail.shouldFocus.map((t: string, i: number) => (
+                  <li key={`sf-${i}`} className="text-sm leading-6">{t}</li>
                 ))}
-              </ul>
+              </ol>
             </CardContent>
           </Card>
-        )}
 
-        {/* === CTA（PDFにも載る）：会社規模で分岐表示 === */}
-        <ReportCTA
-          resultId={data.resultId}
-          companySize={data.companySize}
-          downloadUrl={`/report?resultId=${encodeURIComponent(data.resultId)}`}
-        />
+          {detail.growthStory && (
+            <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
+              <CardContent className="p-6 space-y-2">
+                <h3 className="font-semibold">〔現代における成長ストーリー〕</h3>
+                <p className="text-sm leading-7 text-muted-foreground">{detail.growthStory}</p>
+              </CardContent>
+            </Card>
+          )}
 
-        {/* オープンチャット告知（共通） */}
-        <Card className="rounded-2xl border shadow-sm mt-6 break-inside-avoid print:border">
-          <CardContent className="p-6 flex flex-col sm:flex-row items-center gap-5">
-            <div className="flex-1">
-              <h3 className="text-base font-semibold">最新情報・交流はLINEオープンチャットで</h3>
-              <p className="text-sm text-muted-foreground mt-1">経営のヒントやアップデートを配信中。参加は無料です。</p>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <a
-                  href="https://x.gd/9RRcN"
-                  className="text-sm underline underline-offset-4"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  参加リンク：https://x.gd/9RRcN
-                </a>
-                <a
-                  href="https://x.gd/9RRcN"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center rounded-2xl border px-3 py-2 text-sm hover:bg-accent"
-                >
-                  オープンチャットに参加する
-                </a>
-              </div>
-            </div>
+          {detail.actionPlan?.length ? (
+            <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
+              <CardContent className="p-6 space-y-2">
+                <h3 className="font-semibold">〔具体的なアクションプラン〕</h3>
+                <ul className="list-disc pl-5 space-y-1">
+                  {detail.actionPlan.map((t: string, i: number) => (
+                    <li key={`ap-${i}`} className="text-sm leading-6">{t}</li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          ) : null}
 
-            <a
-              href="https://x.gd/9RRcN"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0"
-              aria-label="LINEオープンチャットに参加する"
-            >
-              <img
-                src="/images/qr-openchat.jpg"
-                alt="LINEオープンチャットQRコード"
-                width={144}
-                height={144}
-                className="h-36 w-36 rounded-md border bg-white object-contain"
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-              />
-            </a>
+          {detail.connector && (
+            <p className="mt-6 text-sm leading-7 text-gray-600">
+              {detail.connector}
+            </p>
+          )}
+        </>
+      )}
+
+      {/* 個別コメント（自分だけのパート） */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+        <Card className="rounded-2xl border shadow-sm break-inside-avoid">
+          <CardContent className="p-6 space-y-1">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Target className="w-5 h-5" /> あなたが持つ才能（ギフト）
+            </h3>
+            <p className="text-xs text-muted-foreground">※ あなたの回答から抽出した“いま効いている強み”</p>
+            <ul className="list-disc pl-5 space-y-1 mt-1">
+              {personal.strengths.map((t: string, i: number) => (
+                <li key={`ps-${i}`} className="text-sm leading-6">{t}</li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
 
-        <footer className="pt-6 text-center text-xs text-muted-foreground">
-          © 2025 一般社団法人 企業の未来づくり研究所
-        </footer>
+        <Card className="rounded-2xl border shadow-sm break-inside-avoid">
+          <CardContent className="p-6 space-y-1">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Target className="w-5 h-5" /> 新たな挑戦のフィールド
+            </h3>
+            <p className="text-xs text-muted-foreground">※ 次の90日で磨くと効果が高いテーマ</p>
+            <ul className="list-disc pl-5 space-y-1 mt-1">
+              {personal.improvements.map((t: string, i: number) => (
+                <li key={`pi-${i}`} className="text-sm leading-6">{t}</li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       </div>
-    );
-  }
-);
-Printable.displayName = 'Printable';
+
+      {personal.notes.length > 0 && (
+        <Card className="rounded-2xl border shadow-sm mt-4 break-inside-avoid">
+          <CardContent className="p-6 space-y-2">
+            <h3 className="font-semibold">補足メモ</h3>
+            <ul className="list-disc pl-5 space-y-1">
+              {personal.notes.map((n: string, i: number) => (
+                <li key={`pn-${i}`} className="text-sm leading-6">{n}</li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* === CTA（PDFにも載る）：会社規模で分岐表示 === */}
+      <ReportCTA
+        resultId={data.resultId}
+        companySize={data.companySize}
+        // 動的パスに統一（メールと同じ形）
+        downloadUrl={`/report/${encodeURIComponent(data.resultId)}`}
+      />
+
+      {/* オープンチャット告知（共通） */}
+      <Card className="rounded-2xl border shadow-sm mt-6 break-inside-avoid print:border">
+        <CardContent className="p-6 flex flex-col sm:flex-row items-center gap-5">
+          <div className="flex-1">
+            <h3 className="text-base font-semibold">最新情報・交流はLINEオープンチャットで</h3>
+            <p className="text-sm text-muted-foreground mt-1">経営のヒントやアップデートを配信中。参加は無料です。</p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <a
+                href="https://x.gd/9RRcN"
+                className="text-sm underline underline-offset-4"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                参加リンク：https://x.gd/9RRcN
+              </a>
+              <a
+                href="https://x.gd/9RRcN"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center rounded-2xl border px-3 py-2 text-sm hover:bg-accent"
+              >
+                オープンチャットに参加する
+              </a>
+            </div>
+          </div>
+
+          <a
+            href="https://x.gd/9RRcN"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0"
+            aria-label="LINEオープンチャットに参加する"
+          >
+            <img
+              src="/images/qr-openchat.jpg"
+              alt="LINEオープンチャットQRコード"
+              width={144}
+              height={144}
+              className="h-36 w-36 rounded-md border bg-white object-contain"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            />
+          </a>
+        </CardContent>
+      </Card>
+
+      <footer className="pt-6 text-center text-xs text-muted-foreground">
+        © 2025 一般社団法人 企業の未来づくり研究所
+      </footer>
+    </div>
+  );
+}
 
 /* ========= レポート（親：印刷ボタン＆ref） ========= */
 export default function ReportTemplate({ data }: { data: ReportInput }) {
   const printRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = useReactToPrint({
+    // v3: contentRef を使う（content は不要）
     contentRef: printRef,
     documentTitle: `report_${data.resultId}`,
     pageStyle: `
@@ -373,8 +380,10 @@ export default function ReportTemplate({ data }: { data: ReportInput }) {
           </Button>
         </header>
 
-        {/* 印刷対象（ここにCTAとQRも含めたのでPDFにも出ます） */}
-        <Printable ref={printRef} data={data} />
+        {/* 印刷対象（親でrefを付与） */}
+        <div ref={printRef}>
+          <ReportBody data={data} />
+        </div>
       </div>
     </div>
   );
