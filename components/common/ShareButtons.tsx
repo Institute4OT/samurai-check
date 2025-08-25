@@ -1,44 +1,51 @@
+// components/common/ShareButtons.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 
 type Props = {
-  /** 例: "豊臣秀吉型" */
-  typeName: string;
-  /** シェアしたいURL（省略時は window.location.origin を使用し、トップに誘導） */
+  /** 例: "豊臣秀吉型"（任意。未指定なら text または汎用文言を使用） */
+  typeName?: string;
+  /** シェアしたいURL（未指定時は window.location.origin にフォールバック） */
   url?: string;
+  /** 直接シェア文言を渡したい場合（任意） */
+  text?: string;
   className?: string;
 };
 
-export default function ShareButtons({ typeName, url, className }: Props) {
+export default function ShareButtons({ typeName, url, text, className }: Props) {
   const [origin, setOrigin] = useState<string>('');
 
   useEffect(() => {
-    if (!url && typeof window !== 'undefined') {
+    if (typeof window !== 'undefined') {
+      // 明示URLが無ければ origin を確保（トップ誘導）
       setOrigin(window.location.origin);
     }
-  }, [url]);
+  }, []);
 
-  // シェア先URL（トップへ誘導。必要なら /?from=share 等を付けてください）
+  // URLを必ずstringに整形（未指定ならトップへ）
   const shareUrl = useMemo(() => {
-    const base = url || origin || '';
+    const base = (url ?? origin ?? '').trim();
     if (!base) return '';
-    // 末尾スラッシュ整形
     return base.endsWith('/') ? base : `${base}/`;
   }, [url, origin]);
 
-  const text = useMemo(
-    () => `私は「${typeName}」でした！AI時代の経営者 武将タイプ診断やってみた😆`,
-    [typeName]
-  );
+  // シェア文言（優先度：props.text > typeNameベース > 汎用）
+  const shareText = useMemo(() => {
+    if (text && text.trim() !== '') return text;
+    if (typeName && typeName.trim() !== '') {
+      return `私は「${typeName}」でした！AI時代の経営者 武将タイプ診断やってみた😆`;
+    }
+    return `AI時代の経営者 武将タイプ診断やってみた😆`;
+  }, [text, typeName]);
 
   const encoded = useMemo(
     () => ({
       url: encodeURIComponent(shareUrl),
-      text: encodeURIComponent(text),
-      both: encodeURIComponent(`${text} ${shareUrl}`),
+      text: encodeURIComponent(shareText),
+      both: encodeURIComponent(`${shareText} ${shareUrl}`.trim()),
     }),
-    [shareUrl, text]
+    [shareUrl, shareText]
   );
 
   // 各サービスの公式エンドポイント（2025-08時点）
@@ -70,18 +77,24 @@ export default function ShareButtons({ typeName, url, className }: Props) {
   function openPopup(href: string) {
     const w = 680;
     const h = 520;
-    const y = typeof window !== 'undefined' ? window.top!.outerHeight / 2 + window.top!.screenY - h / 2 : 0;
-    const x = typeof window !== 'undefined' ? window.top!.outerWidth / 2 + window.top!.screenX - w / 2 : 0;
+    const top =
+      typeof window !== 'undefined'
+        ? window.top!.outerHeight / 2 + window.top!.screenY - h / 2
+        : 0;
+    const left =
+      typeof window !== 'undefined'
+        ? window.top!.outerWidth / 2 + window.top!.screenX - w / 2
+        : 0;
     window.open(
       href,
       '_blank',
-      `popup=yes,noopener,noreferrer,width=${w},height=${h},top=${y},left=${x}`
+      `popup=yes,noopener,noreferrer,width=${w},height=${h},top=${top},left=${left}`
     );
   }
 
   async function copyAll() {
     try {
-      await navigator.clipboard.writeText(`${text} ${shareUrl}`);
+      await navigator.clipboard.writeText(`${shareText} ${shareUrl}`.trim());
       alert('リンクと文章をコピーしました');
     } catch {
       alert('コピーに失敗しました。手動でコピーしてください。');
@@ -89,10 +102,9 @@ export default function ShareButtons({ typeName, url, className }: Props) {
   }
 
   async function webShare() {
-    // 端末のネイティブ共有（使える環境のみ）
     if (navigator.share) {
       try {
-        await navigator.share({ title: '武将タイプ診断', text, url: shareUrl });
+        await navigator.share({ title: '武将タイプ診断', text: shareText, url: shareUrl });
       } catch {
         /* キャンセル等は無視 */
       }

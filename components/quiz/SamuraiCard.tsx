@@ -6,9 +6,9 @@ import ShareButtons from '@/components/common/ShareButtons';
 import { Check, Copy } from 'lucide-react';
 
 type Props = {
-  type: string;                 // 例: "真田幸村型"
-  description: string;          // タイプの説明文
-  userId?: string | null;       // 診断ID（任意）
+  type: string;           // 例: "真田幸村型"
+  description: string;    // タイプの説明文
+  userId?: string | null; // 診断ID（任意）
 };
 
 export default function SamuraiCard({ type, description, userId }: Props) {
@@ -25,9 +25,11 @@ export default function SamuraiCard({ type, description, userId }: Props) {
     }
   }
 
+  // ShareButtons に渡す値をメモ化（url は必ず string に確定）
   const share = useMemo(() => {
-    const url =
-      typeof window !== 'undefined' ? `${window.location.origin}/` : undefined;
+    const origin =
+      typeof window !== 'undefined' ? window.location.origin : '';
+    const url = `${origin}/`; // 末尾スラッシュ付きで統一
     const text = `#武将タイプ診断　私は「${type}」タイプでした！当たってる？👇`;
     return { url, text };
   }, [type]);
@@ -45,14 +47,22 @@ export default function SamuraiCard({ type, description, userId }: Props) {
             className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
             title="診断IDをコピー"
           >
-            {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+            {copied ? (
+              <Check className="w-4 h-4 text-green-500" />
+            ) : (
+              <Copy className="w-4 h-4" />
+            )}
           </button>
         </div>
       )}
 
       <div className="mt-4 border-t border-red-200/40 pt-3">
         <p className="text-xs text-gray-500 mb-1">あなたの武将型をシェアしよう</p>
-        <ShareButtons url={share.url} text={share.text} className="justify-center gap-2" />
+        <ShareButtons
+          url={share.url}            // string 確定
+          text={share.text}
+          className="justify-center gap-2"
+        />
       </div>
     </div>
   );
