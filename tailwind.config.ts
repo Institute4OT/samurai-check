@@ -1,4 +1,6 @@
+// tailwind.config.ts
 import type { Config } from 'tailwindcss';
+import defaultTheme from 'tailwindcss/defaultTheme';
 
 const config: Config = {
   darkMode: ['class'],
@@ -9,6 +11,20 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      // ← 日本語フォントを最優先に（next/font の CSS 変数も反映）
+      fontFamily: {
+        sans: [
+          'var(--font-sans)',
+          'Hiragino Kaku Gothic ProN',
+          'Hiragino Sans',
+          'Yu Gothic',
+          'YuGothic',
+          'Meiryo',
+          'Noto Sans JP',
+          ...defaultTheme.fontFamily.sans,
+        ],
+      },
+
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
         'gradient-conic':
@@ -63,20 +79,12 @@ const config: Config = {
       },
       keyframes: {
         'accordion-down': {
-          from: {
-            height: '0',
-          },
-          to: {
-            height: 'var(--radix-accordion-content-height)',
-          },
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
         },
         'accordion-up': {
-          from: {
-            height: 'var(--radix-accordion-content-height)',
-          },
-          to: {
-            height: '0',
-          },
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
         },
       },
       animation: {
@@ -87,4 +95,5 @@ const config: Config = {
   },
   plugins: [require('tailwindcss-animate')],
 };
+
 export default config;
