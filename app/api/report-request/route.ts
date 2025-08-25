@@ -11,6 +11,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const preferredRegion = ['hnd1']; // Tokyo(羽田)で実行
 
 const COMPANY_SIZE_VALUES = [
   '1-10','11-50','51-100','101-300','301-500','501-1000','1001+',

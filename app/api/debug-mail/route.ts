@@ -4,6 +4,7 @@ import { sendMail } from '@/lib/mail';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const preferredRegion = ['hnd1'];
 
 // Vercel に DEBUG_MAIL_KEY を設定して使う（無いと 403）
 const KEY = process.env.DEBUG_MAIL_KEY;
