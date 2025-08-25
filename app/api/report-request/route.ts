@@ -7,6 +7,11 @@ import {
   renderReportRequestMailToOps,
 } from '@/lib/emailTemplates';
 
+// Edge では nodemailer が使えないため Node.js を明示
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const COMPANY_SIZE_VALUES = [
   '1-10','11-50','51-100','101-300','301-500','501-1000','1001+',
 ] as const;
@@ -18,10 +23,11 @@ const INDUSTRY_VALUES = [
   'サービス','その他',
 ] as const;
 
-// UUID または id_ で始まるフォールバックを許容
 const ResultIdSchema = z
   .string()
-  .regex(/^(:?[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|id_[a-z0-9_-]+)$/i)
+  .regex(
+    /^(:?[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|id_[a-z0-9_-]+)$/i
+  )
   .optional();
 
 const Payload = z.object({
@@ -30,46 +36,57 @@ const Payload = z.object({
   companyName: z.string().optional(),
   companySize: z.enum(COMPANY_SIZE_VALUES),
   industry: z.enum(INDUSTRY_VALUES),
-  agree: z.boolean().refine(v => v === true),
+  agree: z.boolean().refine((v) => v === true),
   resultId: ResultIdSchema,
 });
 
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => null);
-  const parse = Payload.safeParse(body);
-  if (!parse.success) {
-    return NextResponse.json({ ok: false, error: 'invalid_payload' }, { status: 400 });
+  try {
+    const body = await req.json().catch(() => null);
+    const parse = Payload.safeParse(body);
+    if (!parse.success) {
+      return NextResponse.json(
+        { ok: false, error: 'invalid_payload' },
+        { status: 400 }
+      );
+    }
+    const p = parse.data;
+
+    // 申込者へ
+    const userMail = renderReportRequestMailToUser({
+      name: p.name,
+      resultId: p.resultId,
+      companySize: p.companySize,
+    });
+    await sendMail({
+      to: p.email,
+      subject: userMail.subject,
+      html: userMail.html,
+      text: userMail.text,
+    });
+
+    // 運用通知へ
+    const opsMail = renderReportRequestMailToOps({
+      email: p.email,
+      name: p.name,
+      companyName: p.companyName,
+      companySize: p.companySize,
+      industry: p.industry,
+      resultId: p.resultId,
+    });
+    await sendMail({
+      to: (process.env.MAIL_TO_OPS || 'info@ourdx-mtg.com').trim(),
+      subject: opsMail.subject,
+      html: opsMail.html,
+      text: opsMail.text,
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('[api/report-request] failed:', e);
+    return NextResponse.json(
+      { ok: false, error: e?.message || String(e) },
+      { status: 500 }
+    );
   }
-  const p = parse.data;
-
-  // ---- ユーザーへ
-  const userMail = renderReportRequestMailToUser({
-    name: p.name,
-    resultId: p.resultId,
-    companySize: p.companySize,
-  });
-  await sendMail({
-    to: p.email,
-    subject: userMail.subject,
-    html: userMail.html,
-    text: userMail.text,
-  });
-
-  // ---- 運用へ
-  const opsMail = renderReportRequestMailToOps({
-    email: p.email,
-    name: p.name,
-    companyName: p.companyName,
-    companySize: p.companySize,
-    industry: p.industry,
-    resultId: p.resultId,
-  });
-  await sendMail({
-    to: process.env.MAIL_TO_OPS || 'info@ourdx-mtg.com',
-    subject: opsMail.subject,
-    html: opsMail.html,
-    text: opsMail.text,
-  });
-
-  return NextResponse.json({ ok: true });
 }

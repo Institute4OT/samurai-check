@@ -1,5 +1,6 @@
 // lib/scoringSystem.ts
 // スコア集計システム（質問ごとの上限 cap と重み weight 対応）
+// Q14(表示) ⇔ id:16 等のズレに対しても「相談窓口なし」減点が効くように実装
 
 export interface CategoryScores {
   "アップデート力": number;
@@ -47,6 +48,18 @@ function getPerQuestionMaxScore(qKey: string, optionScores: number[]): number {
   const maxOption = optionScores.length ? Math.max(...optionScores) : 0;
   return typeof cap === "number" ? cap : maxOption;
 }
+
+/* ===== 「相談窓口なし」を選んだら 1 点減点（排他にしない） =====
+ * - 表示Q14でも内部idが異なる場合に備え、キー/文言の両方で判定
+ * - 減点は合計→cap→weight の「合計」の段階で適用（下限0）
+ */
+const PENALTY_QUESTION_KEYS = new Set(["Q14", "Q16"]); // 将来ズレ対策
+const PENALTY_QUESTION_TEXT_KEYS = ["ハラスメント相談窓口", "相談窓口"]; // 文言でも拾う
+const NO_WINDOW_WORDS = [
+  "そういう相談窓口は設置していない",
+  "窓口は設置していない",
+  "相談窓口を設置していない",
+];
 
 /** カテゴリ別の最大スコア（正規化の分母）を計算：cap＆weight 反映版 */
 export function calculateMaxScoresPerCategory(): CategoryScores {
@@ -110,12 +123,36 @@ export function calculateCategoryScores(
     const qMax = getPerQuestionMaxScore(qKey, optionScores);
     const w = getQuestionWeight(qKey);
 
-    // 合計 → cap → weight
+    // 合計
     let total = 0;
     selectedAnswers.forEach((sel) => {
       const opt = q.options.find((o) => o.text === sel);
       if (opt) total += opt.score;
     });
+
+    // ===== 「相談窓口なし」減点（排他にしない） =====
+    const isPenaltyQuestion =
+      PENALTY_QUESTION_KEYS.has(qKey) ||
+      PENALTY_QUESTION_TEXT_KEYS.some((k) =>
+        (q?.questionText || "").includes(k)
+      );
+
+    const hasNoWindow = (selectedAnswers || []).some((s) =>
+      NO_WINDOW_WORDS.some((w) => s.includes(w))
+    );
+
+    if (isPenaltyQuestion && hasNoWindow) {
+      const before = total;
+      total = Math.max(0, total - 1); // 下限0で1点減点
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Penalty applied on ${qKey}: ${before} -> ${total} (窓口なし)`
+        );
+      }
+    }
+    // ==============================================
+
+    // cap → weight
     const capped = Math.min(total, qMax);
     const weighted = capped * w;
 

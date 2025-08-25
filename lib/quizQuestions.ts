@@ -282,6 +282,7 @@ export const quizQuestions: QuizQuestion[] = [
     questionText:
       'Q16. あなたの組織のハラスメント相談窓口等の人事運用について、該当するものは？（複数選択可・最大３つ）',
     options: [
+      { text: 'そういう相談窓口は設置していない。', score: 0 },  
       { text: '相談は社長や直属の上長が受けるのが基本', score: 0 },
       { text: '性別で異なる服装/制服などの慣行が残っている', score: 0 },
       { text: '相談は社内の特定者（担当者）が受ける体制で、見直しを進めている', score: 1 },

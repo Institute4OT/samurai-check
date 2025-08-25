@@ -39,6 +39,10 @@ export type ReportFlags = {
   q5DataDriven?: boolean;
   q8ChallengeFriendly?: boolean;
   q13RulesBased?: boolean;
+
+  // ★追加：相談窓口が未設置
+  /** ハラスメント相談窓口が未設置（Q14/16で「窓口なし」を選択） */
+  noConsultWindow?: boolean;
 };
 
 type TemplateKind = 'strength' | 'improvement';
@@ -130,6 +134,11 @@ export function genScoreFallbackBullets(input: {
 
   // ---- notes（回答フラグ由来の一言アドバイス）----
   const f = input.flags || {};
+
+  // ★追加：相談窓口が未設置
+  if (f.noConsultWindow) {
+    notes.push('相談窓口が未設置。法令順守と心理的安全の観点から、外部/匿名の窓口を最低1つ整備し、就業規則・評価・周知まで含めて早急に運用を開始しましょう。');
+  }
 
   if (f.manyZeroOnQ5) notes.push('価値観（Q5）で0が多め。“やらないことリスト”で意思決定のエネルギーを節約。');
   if (f.noRightHand) notes.push('右腕/後継の育成が弱め。判断基準の言語化と役割移譲で“秒速”を持続可能に。');
