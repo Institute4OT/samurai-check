@@ -1,7 +1,7 @@
 // lib/emailTemplates.ts
 // メール本文（テキスト/HTML）を生成するユーティリティ群
 // - ベースURLは NEXT_PUBLIC_APP_URL を使用（末尾スラなし）
-// - レポートURLは /report/[resultId] の動的パスに統一
+// - レポートURLは /report?resultId=... のクエリ形式（既存の /report ページ仕様に合わせる）
 // - 51名以上のメールは consultant（ishijima/morigami）でSPIRの予約URLを出し分け
 
 /* ================== 共通定数 ================== */
@@ -13,8 +13,9 @@ export const APP_URL = (
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 ).replace(/\/+$/, '');
 
-// /report/[resultId]
-export const REPORT_URL = (id: string) => `${APP_URL}/report/${encodeURIComponent(id)}`;
+// /report?resultId=...
+export const REPORT_URL = (id: string) =>
+  `${APP_URL}/report?resultId=${encodeURIComponent(id)}`;
 
 const SPIR_ISHIJIMA = process.env.SPIR_ISHIJIMA_URL?.trim();
 const SPIR_MORIGAMI  = process.env.SPIR_MORIGAMI_URL?.trim();
@@ -57,8 +58,8 @@ https://ourdx-mtg.com/
   const text = `
 ${greeting}
 
-詳細レポートのお申込み、ありがとうございます。
-下記URLから内容をご確認いただけます。
+詳細レポートのお申込みありがとうございます。
+下記URLから「今すぐ」内容をご確認いただけます。
 
 ▼レポート確認
 ${reportUrl}
@@ -88,8 +89,8 @@ ${signatureText}
 
   const html = `
   <p>${greeting}</p>
-  <p>詳細レポートのお申込み、ありがとうございます。<br>
-     下記より内容をご確認ください。</p>
+  <p>詳細レポートのお申込みありがとうございます。<br>
+     下記より<strong>今すぐ</strong>内容をご確認いただけます。</p>
 
   <h3 style="margin:14px 0 6px;">▼レポート確認</h3>
   <p>${button(reportUrl, 'レポートを開く')}</p>
@@ -152,10 +153,8 @@ export function renderReportRequestMailToUser(args: {
     const text = `
 ${args.name} 様
 
-詳細レポートのお申込みを受け付けました。
-担当よりご連絡差し上げます。
-
-${reportUrl ? `▼レポート確認\n${reportUrl}\n\n` : ''}▼無料個別相談（読み解き／次の一手／90日アクション案）
+詳細レポートのお申込みありがとうございます。
+${reportUrl ? `▼レポート確認（今すぐ閲覧可）\n${reportUrl}\n\n` : ''}▼無料個別相談（読み解き／次の一手／90日アクション案）
 ${bookingUrl}
 
 このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
@@ -167,7 +166,7 @@ https://ourdx-mtg.com/
     const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
       <p>${args.name} 様</p>
-      <p>詳細レポートのお申込みを受け付けました。担当よりご連絡差し上げます。</p>
+      <p>詳細レポートのお申込みありがとうございます。以下から<strong>今すぐ</strong>ご確認いただけます。</p>
       ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
       <p>▼無料個別相談（読み解き／次の一手／90日アクション案）<br/>
         <a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a>
@@ -186,8 +185,8 @@ https://ourdx-mtg.com/
   const text = `
 ${args.name} 様
 
-詳細レポートのお申込みを受け付けました。
-${reportUrl ? `▼レポート確認\n${reportUrl}\n\n` : ''}
+詳細レポートのお申込みありがとうございます。
+${reportUrl ? `▼レポート確認（今すぐ閲覧可）\n${reportUrl}\n\n` : ''}
 小さな団体の取り組みです。もし価値があれば、経営者仲間へ共有いただけると嬉しいです。
 
 ▼紹介用リンク
@@ -202,9 +201,9 @@ https://ourdx-mtg.com/
   const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
     <p>${args.name} 様</p>
-    <p>詳細レポートのお申込みを受け付けました。</p>
+    <p>詳細レポートのお申込みありがとうございます。以下から<strong>今すぐ</strong>ご確認いただけます。</p>
     ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
-    <p>小さな団体の取り組みです。価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。</p>
+    <p>価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。</p>
     <p>▼紹介用リンク<br/><a href="${SHARE_URL}" target="_blank" rel="noopener">${SHARE_URL}</a></p>
     <p>ひとこと応援コメントも大歓迎です（このメールにご返信ください）。</p>
     <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
