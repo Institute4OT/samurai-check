@@ -255,3 +255,91 @@ export function renderReportRequestMailToOps(args: {
 
   return { subject, text, html };
 }
+
+/* === 個別相談 申込（consult-intake） 用の自動返信テンプレ ===
+   ※ このファイル内に Consultant / bookingUrlFor / REPORT_URL が既にある前提
+*/
+
+export function renderConsultIntakeMailToUser(args: {
+  name: string;
+  consultant?: Consultant;   // 'ishijima' | 'morigami' | undefined
+  resultId?: string;         // あればレポートURLも載せる
+}) {
+  const bookingUrl = bookingUrlFor(args.consultant);
+  const reportUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
+
+  const subject = '【受付】無料個別相談のご案内（今すぐ予約OK）';
+  const text = `
+${args.name} 様
+
+無料個別相談のお申込みありがとうございます。
+下記の予約リンクから今すぐ日程をご選択いただけます。
+
+▼予約リンク
+${bookingUrl}
+${reportUrl ? `\n▼診断レポート（参考）\n${reportUrl}\n` : ''}
+
+このメールに返信でもご連絡いただけます（返信先：info@ourdx-mtg.com）。
+  `.trim();
+
+  const btn = (href: string, label: string) => `
+    <a href="${href}" target="_blank" rel="noopener"
+       style="display:inline-block;padding:12px 18px;margin:6px 0;background:#0ea5e9;color:#fff !important;text-decoration:none;border-radius:8px;font-weight:600;">
+       ${label}
+    </a>`.trim();
+
+  const html = `
+  <p>${args.name} 様</p>
+  <p>無料個別相談のお申込みありがとうございます。<br>下記の予約リンクから<strong>今すぐ</strong>日程をご選択いただけます。</p>
+  <p>${btn(bookingUrl, '無料個別相談を予約する')}</p>
+  <p style="margin:6px 0;color:#374151;font-size:14px;">予約リンク：
+     <a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a></p>
+  ${reportUrl ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0" />
+  <p style="margin:6px 0;color:#374151;font-size:14px;">参考：診断レポート<br>
+     <a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0" />
+  <p style="margin:0;color:#374151;font-size:13px;">このメールに返信でもご連絡いただけます（返信先：
+     <a href="mailto:info@ourdx-mtg.com">info@ourdx-mtg.com</a>）。</p>
+  `.trim();
+
+  return { subject, text, html };
+}
+
+export function renderConsultIntakeMailToOps(args: {
+  email: string;
+  name: string;
+  companyName?: string;
+  companySize?: string;
+  industry?: string;
+  consultant?: Consultant;
+  resultId?: string;
+}) {
+  const subject = '【samurai-check】無料個別相談 申込 受付';
+  const text = `
+▼申込内容
+氏名: ${args.name}
+メール: ${args.email}
+会社名: ${args.companyName || '-'}
+会社規模: ${args.companySize || '-'}
+業種: ${args.industry || '-'}
+担当: ${args.consultant || '-'}
+診断ID: ${args.resultId || '-'}
+  `.trim();
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
+    <h3 style="margin:0 0 12px;">無料個別相談 申込 受付</h3>
+    <table style="border-collapse:collapse;font-size:14px;">
+      <tr><td style="padding:4px 8px;color:#666;">氏名</td><td style="padding:4px 8px;">${args.name}</td></tr>
+      <tr><td style="padding:4px 8px;color:#666;">メール</td><td style="padding:4px 8px;">${args.email}</td></tr>
+      <tr><td style="padding:4px 8px;color:#666;">会社名</td><td style="padding:4px 8px;">${args.companyName || '-'}</td></tr>
+      <tr><td style="padding:4px 8px;color:#666;">会社規模</td><td style="padding:4px 8px;">${args.companySize || '-'}</td></tr>
+      <tr><td style="padding:4px 8px;color:#666;">業種</td><td style="padding:4px 8px;">${args.industry || '-'}</td></tr>
+      <tr><td style="padding:4px 8px;color:#666;">担当</td><td style="padding:4px 8px;">${args.consultant || '-'}</td></tr>
+      <tr><td style="padding:4px 8px;color:#666;">診断ID</td><td style="padding:4px 8px;">${args.resultId || '-'}</td></tr>
+    </table>
+  </div>
+  `.trim();
+
+  return { subject, text, html };
+}
