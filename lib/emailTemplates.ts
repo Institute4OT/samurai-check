@@ -1,164 +1,79 @@
 // lib/emailTemplates.ts
-// メール本文（テキスト/HTML）を生成するユーティリティ群
-// - ベースURLは NEXT_PUBLIC_APP_URL を使用（末尾スラなし）
-// - レポートURLは /report?resultId=... のクエリ形式（既存の /report ページ仕様に合わせる）
-// - 51名以上のメールは consultant（ishijima/morigami）でSPIRの予約URLを出し分け
-
-/* ================== 共通定数 ================== */
+// ─ メール本文のテンプレ & URLユーティリティ ─
 
 const BRAND = 'IOT（企業の未来づくり研究所）';
 
+// ベースURL: NEXT_PUBLIC_APP_URL > VERCEL_URL > localhost
 export const APP_URL = (
   process.env.NEXT_PUBLIC_APP_URL ||
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 ).replace(/\/+$/, '');
 
-// /report?resultId=...
+// /report?resultId=<id>
 export const REPORT_URL = (id: string) =>
   `${APP_URL}/report?resultId=${encodeURIComponent(id)}`;
 
+// SPIR 予約URL（コンサル出し分け＆resultId と email を付与）
 const SPIR_ISHIJIMA = process.env.SPIR_ISHIJIMA_URL?.trim();
 const SPIR_MORIGAMI  = process.env.SPIR_MORIGAMI_URL?.trim();
 
 export type Consultant = 'ishijima' | 'morigami' | undefined;
-export const bookingUrlFor = (c?: Consultant) =>
-  c === 'morigami' ? (SPIR_MORIGAMI || `${APP_URL}/consult`) :
-  c === 'ishijima' ? (SPIR_ISHIJIMA || `${APP_URL}/consult`) :
-  `${APP_URL}/consult`;
+
+/**
+ * 相談予約用URLを生成（SPIR直/自社フォームどちらでもOK）
+ * - base: consultant に応じて SPIR_* or /consult/start
+ * - クエリ: resultId, email を必要に応じて付与
+ */
+export const bookingUrlFor = (c?: Consultant, resultId?: string, email?: string) => {
+  const base =
+    c === 'morigami' ? (SPIR_MORIGAMI || `${APP_URL}/consult/start`) :
+    c === 'ishijima' ? (SPIR_ISHIJIMA || `${APP_URL}/consult/start`) :
+    `${APP_URL}/consult/start`;
+
+  const params = new URLSearchParams();
+  if (resultId) params.set('resultId', resultId);
+  if (email)    params.set('email', email);
+  const qs = params.toString();
+
+  return qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base;
+};
 
 const SHARE_URL = APP_URL;
 
-/* ================== 個別メール：詳細レポ案内 ================== */
-
-export function buildConsultEmail(params: {
-  toName?: string;
-  reportUrl: string;      // REPORT_URL(resultId)
-  bookingUrl: string;     // bookingUrlFor(consultant)
-  lineUrl?: string;
-  offerNote?: string;
-}) {
-  const {
-    toName,
-    reportUrl,
-    bookingUrl,
-    lineUrl = 'https://x.gd/9RRcN',
-    offerNote = '申込者限定・今月枠あり',
-  } = params;
-
-  const greeting = toName ? `${toName} 様` : 'ご担当者様';
-  const subject = `【AI診断】詳細レポートのご案内（受付完了）｜${offerNote} 無料個別相談`;
-
-  const signatureText = `
-一般社団法人 企業の未来づくり研究所（Institute for Our Transformation）
-https://ourdx-mtg.com/
-お問合せ先：info@ourdx-mtg.com
-〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F
-  `.trim();
-
-  const text = `
-${greeting}
-
-詳細レポートのお申込みありがとうございます。
-下記URLから「今すぐ」内容をご確認いただけます。
-
-▼レポート確認
-${reportUrl}
-
-▼【特典】無料個別相談（${offerNote}）
-結果の読み解き／次の一手／90日アクション案まで一緒に詰めます。
-予約フォーム：
-${bookingUrl}
-
-―― 補足（情報配信）
-IOTの最新情報は、LINEオープンチャットで発信しています。
-${lineUrl}
-※1:1のやり取りはできません／ご相談は上記フォームから。
-
-このメールへ直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
-
-${signatureText}
-  `.trim();
-
-  const button = (href: string, label: string) => `
-    <a href="${href}" target="_blank" rel="noopener"
-       style="
-         display:inline-block;padding:12px 18px;margin:6px 0;
-         background:#0ea5e9;color:#fff !important;text-decoration:none;
-         border-radius:8px;font-weight:600;
-       ">${label}</a>`.trim();
-
-  const html = `
-  <p>${greeting}</p>
-  <p>詳細レポートのお申込みありがとうございます。<br>
-     下記より<strong>今すぐ</strong>内容をご確認いただけます。</p>
-
-  <h3 style="margin:14px 0 6px;">▼レポート確認</h3>
-  <p>${button(reportUrl, 'レポートを開く')}</p>
-  <p style="margin:6px 0;color:#374151;font-size:14px;">URL：<a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>
-
-  <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb;">
-
-  <h3 style="margin:14px 0 6px;">▼【特典】無料個別相談（${offerNote}）</h3>
-  <ul style="margin:0 0 10px 18px;color:#374151;font-size:14px;line-height:1.6;">
-    <li>結果の読み解き</li>
-    <li>次の一手の設計</li>
-    <li>90日アクション案（3つの打ち手＋計測指標）</li>
-  </ul>
-  <p>${button(bookingUrl, '無料個別相談を予約する')}</p>
-  <p style="margin:6px 0;color:#374151;font-size:14px;">予約フォーム：<a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a></p>
-
-  <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb;">
-
-  <h3 style="margin:14px 0 6px;">▼最新情報の受け取り（任意）</h3>
-  <p style="margin:6px 0;color:#374151;font-size:14px;">
-    IOTの研修・組織開発に関する最新情報は、LINEオープンチャットで発信しています。<br>
-    <a href="${lineUrl}" target="_blank" rel="noopener">${lineUrl}</a><br>
-    <small>※1:1のやり取りはできません／予約は不可です。ご相談は予約フォームをご利用ください。</small>
-  </p>
-
-  <p style="margin:16px 0 0;color:#374151;font-size:14px;">
-    このメールに直接ご返信いただいてもOKです（返信先：<a href="mailto:info@ourdx-mtg.com">info@ourdx-mtg.com</a>）。</p>
-
-  <hr style="margin:18px 0;border:none;border-top:1px solid #e5e7eb;">
-  <p style="color:#374151;font-size:13px;line-height:1.6;">
-    一般社団法人 企業の未来づくり研究所（Institute for Our Transformation）<br>
-    <a href="https://ourdx-mtg.com/" target="_blank" rel="noopener">https://ourdx-mtg.com/</a><br>
-    お問合せ先：<a href="mailto:info@ourdx-mtg.com">info@ourdx-mtg.com</a><br>
-    〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F
-  </p>
-  `.trim();
-
-  return { subject, text, html };
-}
-
-/* ================== 受付メール：会社規模で分岐 ================== */
+/* ========== 申込者向け：詳細レポ受付（会社規模で分岐） ========== */
 
 type CompanySize =
   | '1-10' | '11-50' | '51-100' | '101-300' | '301-500' | '501-1000' | '1001+';
 
-/** 申込者向け：受付完了（≤50はアンバサダー、≥51は無料相談案内＋コンサル出し分け） */
+/**
+ * 申込者向け：受付完了（≤50はシェア案内、≥51は無料相談案内つき）
+ * - レポURLは必ず /report?resultId=... 形式に統一
+ * - 相談URLには resultId/email を付けて受け渡し安定化
+ */
 export function renderReportRequestMailToUser(args: {
   name: string;
   resultId?: string;
   companySize: CompanySize;
-  consultant?: Consultant; // 'ishijima' | 'morigami'
+  consultant?: Consultant;
+  email?: string; // 相談リンクに引き回す（任意）
 }) {
   const isLarge = !['1-10', '11-50'].includes(args.companySize);
   const reportUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
-  const bookingUrl = bookingUrlFor(args.consultant);
+  const bookingUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
 
   if (isLarge) {
-    // 51名以上：無料相談の案内を同梱
+    // 51名以上：無料個別相談のご案内も同梱
     const subject = '【受付】詳細レポート＋無料個別相談のご案内';
     const text = `
 ${args.name} 様
 
 詳細レポートのお申込みありがとうございます。
-${reportUrl ? `▼レポート確認（今すぐ閲覧可）\n${reportUrl}\n\n` : ''}▼無料個別相談（読み解き／次の一手／90日アクション案）
+${reportUrl ? `下記URLから今すぐご確認いただけます。\n\n▼レポート確認\n${reportUrl}\n` : ''}
+
+▼無料個別相談（読み解き／次の一手／90日アクション案）
 ${bookingUrl}
 
 このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
-
 ${BRAND}
 https://ourdx-mtg.com/
     `.trim();
@@ -166,12 +81,12 @@ https://ourdx-mtg.com/
     const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
       <p>${args.name} 様</p>
-      <p>詳細レポートのお申込みありがとうございます。以下から<strong>今すぐ</strong>ご確認いただけます。</p>
+      <p>詳細レポートのお申込みありがとうございます。</p>
       ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
       <p>▼無料個別相談（読み解き／次の一手／90日アクション案）<br/>
         <a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a>
       </p>
-      <p>このメールにご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。</p>
+      <p>このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。</p>
       <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
       <p style="font-size:12px;color:#666;">${BRAND}<br/><a href="https://ourdx-mtg.com/">https://ourdx-mtg.com/</a></p>
     </div>
@@ -180,14 +95,14 @@ https://ourdx-mtg.com/
     return { subject, text, html };
   }
 
-  // 50名以下：アンバサダー（拡散のお願い）
+  // 50名以下：アンバサダー（シェアのお願い）
   const subject = '【受付】詳細レポート準備中｜ご協力のお願い';
   const text = `
 ${args.name} 様
 
 詳細レポートのお申込みありがとうございます。
-${reportUrl ? `▼レポート確認（今すぐ閲覧可）\n${reportUrl}\n\n` : ''}
-小さな団体の取り組みです。もし価値があれば、経営者仲間へ共有いただけると嬉しいです。
+${reportUrl ? `下記URLから今すぐご確認いただけます。\n\n▼レポート確認\n${reportUrl}\n` : ''}
+小さな団体の取り組みです。価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。
 
 ▼紹介用リンク
 ${SHARE_URL}
@@ -201,7 +116,7 @@ https://ourdx-mtg.com/
   const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
     <p>${args.name} 様</p>
-    <p>詳細レポートのお申込みありがとうございます。以下から<strong>今すぐ</strong>ご確認いただけます。</p>
+    <p>詳細レポートのお申込みありがとうございます。</p>
     ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
     <p>価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。</p>
     <p>▼紹介用リンク<br/><a href="${SHARE_URL}" target="_blank" rel="noopener">${SHARE_URL}</a></p>
@@ -214,7 +129,7 @@ https://ourdx-mtg.com/
   return { subject, text, html };
 }
 
-/* ================== 運用(IOT)向け：申込内容通知 ================== */
+/* ========== 運用(IOT)向け：申込内容通知 ========== */
 
 export function renderReportRequestMailToOps(args: {
   email: string;
@@ -256,89 +171,34 @@ export function renderReportRequestMailToOps(args: {
   return { subject, text, html };
 }
 
-/* === 個別相談 申込（consult-intake） 用の自動返信テンプレ ===
-   ※ このファイル内に Consultant / bookingUrlFor / REPORT_URL が既にある前提
-*/
-
+/* ========== 相談申込 自動返信テンプレ（APIから呼び出し） ========== */
 export function renderConsultIntakeMailToUser(args: {
   name: string;
-  consultant?: Consultant;   // 'ishijima' | 'morigami' | undefined
-  resultId?: string;         // あればレポートURLも載せる
+  consultant?: Consultant;   // 'ishijima' | 'morigami'
+  resultId?: string;         // あれば /report?resultId=... も案内
+  email?: string;            // 相談URLにクエリで付与
 }) {
-  const bookingUrl = bookingUrlFor(args.consultant);
-  const reportUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
+  // resultId / email をクエリで付与（SPIRでも自社フォームでも受け渡し安定）
+  const bookingUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
+  const reportUrl  = args.resultId ? REPORT_URL(args.resultId) : undefined;
 
   const subject = '【受付】無料個別相談のご案内（今すぐ予約OK）';
   const text = `
 ${args.name} 様
 
 無料個別相談のお申込みありがとうございます。
-下記の予約リンクから今すぐ日程をご選択いただけます。
+下記の予約リンクからご都合の良い日時をご選択ください。
 
-▼予約リンク
+予約リンク：
 ${bookingUrl}
-${reportUrl ? `\n▼診断レポート（参考）\n${reportUrl}\n` : ''}
-
-このメールに返信でもご連絡いただけます（返信先：info@ourdx-mtg.com）。
-  `.trim();
-
-  const btn = (href: string, label: string) => `
-    <a href="${href}" target="_blank" rel="noopener"
-       style="display:inline-block;padding:12px 18px;margin:6px 0;background:#0ea5e9;color:#fff !important;text-decoration:none;border-radius:8px;font-weight:600;">
-       ${label}
-    </a>`.trim();
+${reportUrl ? `\n参考：診断レポート\n${reportUrl}\n` : ''}`.trim();
 
   const html = `
   <p>${args.name} 様</p>
-  <p>無料個別相談のお申込みありがとうございます。<br>下記の予約リンクから<strong>今すぐ</strong>日程をご選択いただけます。</p>
-  <p>${btn(bookingUrl, '無料個別相談を予約する')}</p>
-  <p style="margin:6px 0;color:#374151;font-size:14px;">予約リンク：
-     <a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a></p>
-  ${reportUrl ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0" />
-  <p style="margin:6px 0;color:#374151;font-size:14px;">参考：診断レポート<br>
-     <a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
-  <hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0" />
-  <p style="margin:0;color:#374151;font-size:13px;">このメールに返信でもご連絡いただけます（返信先：
-     <a href="mailto:info@ourdx-mtg.com">info@ourdx-mtg.com</a>）。</p>
-  `.trim();
-
-  return { subject, text, html };
-}
-
-export function renderConsultIntakeMailToOps(args: {
-  email: string;
-  name: string;
-  companyName?: string;
-  companySize?: string;
-  industry?: string;
-  consultant?: Consultant;
-  resultId?: string;
-}) {
-  const subject = '【samurai-check】無料個別相談 申込 受付';
-  const text = `
-▼申込内容
-氏名: ${args.name}
-メール: ${args.email}
-会社名: ${args.companyName || '-'}
-会社規模: ${args.companySize || '-'}
-業種: ${args.industry || '-'}
-担当: ${args.consultant || '-'}
-診断ID: ${args.resultId || '-'}
-  `.trim();
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
-    <h3 style="margin:0 0 12px;">無料個別相談 申込 受付</h3>
-    <table style="border-collapse:collapse;font-size:14px;">
-      <tr><td style="padding:4px 8px;color:#666;">氏名</td><td style="padding:4px 8px;">${args.name}</td></tr>
-      <tr><td style="padding:4px 8px;color:#666;">メール</td><td style="padding:4px 8px;">${args.email}</td></tr>
-      <tr><td style="padding:4px 8px;color:#666;">会社名</td><td style="padding:4px 8px;">${args.companyName || '-'}</td></tr>
-      <tr><td style="padding:4px 8px;color:#666;">会社規模</td><td style="padding:4px 8px;">${args.companySize || '-'}</td></tr>
-      <tr><td style="padding:4px 8px;color:#666;">業種</td><td style="padding:4px 8px;">${args.industry || '-'}</td></tr>
-      <tr><td style="padding:4px 8px;color:#666;">担当</td><td style="padding:4px 8px;">${args.consultant || '-'}</td></tr>
-      <tr><td style="padding:4px 8px;color:#666;">診断ID</td><td style="padding:4px 8px;">${args.resultId || '-'}</td></tr>
-    </table>
-  </div>
+  <p>無料個別相談のお申込みありがとうございます。<br>
+     下記の予約リンクからご都合の良い日時をご選択ください。</p>
+  <p><a href="${bookingUrl}" target="_blank" rel="noopener">予約ページを開く</a></p>
+  ${reportUrl ? `<p>参考：レポート <a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
   `.trim();
 
   return { subject, text, html };
