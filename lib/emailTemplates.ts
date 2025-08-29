@@ -203,3 +203,47 @@ ${reportUrl ? `\n参考：診断レポート\n${reportUrl}\n` : ''}`.trim();
 
   return { subject, text, html };
 }
+
+/* ========== 相談申込：運用(IOT)向け通知（API互換） ========== */
+// ※ Vercelビルドで要求されていた互換エクスポート
+export function renderConsultIntakeMailToOps(args: {
+  name?: string;
+  email?: string;
+  tel?: string;
+  companyName?: string;
+  companySize?: CompanySize | string;
+  industry?: string;
+  resultId?: string;
+  message?: string;
+}) {
+  const subject = '【通知】無料相談の新規申込みがありました';
+  const lines = [
+    `氏名: ${args.name ?? ''}`,
+    `メール: ${args.email ?? ''}`,
+    `電話: ${args.tel ?? ''}`,
+    `会社名: ${args.companyName ?? ''}`,
+    `会社規模: ${args.companySize ?? ''}`,
+    `業種: ${args.industry ?? ''}`,
+    `診断ID: ${args.resultId ?? ''}`,
+    args.message ? `メッセージ: ${args.message}` : '',
+  ].filter(Boolean);
+
+  const text = lines.join('\n');
+  const html = `<div>${lines
+    .map((l) => l.replace(/&/g, '&amp;').replace(/</g, '&lt;'))
+    .join('<br/>')}</div>`;
+
+  return { subject, text, html };
+}
+
+/* ========== 互換：過去コードで使っていた可能性のある名前 ========== */
+// 旧コードが期待しているエクスポート名に合わせたラッパー
+export function buildConsultEmail(args: {
+  name: string;
+  consultant?: Consultant;
+  resultId?: string;
+  email?: string;
+}) {
+  // 互換のため、ユーザー向け受付メールを返す（用途が近いケースが多い）
+  return renderConsultIntakeMailToUser(args);
+}
