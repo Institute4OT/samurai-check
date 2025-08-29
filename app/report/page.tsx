@@ -1,200 +1,153 @@
 // app/report/page.tsx
-import { notFound } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-import ReportTemplate, { ReportInput } from "@/components/report/ReportTemplate";
-import type { SamuraiType } from "@/lib/samuraiJudge";
-import { calculateCategoryScores } from "@/lib/scoringSystem";
+import React from 'react';
+import { createClient } from '@supabase/supabase-js';
+import ReportTemplate, { ReportInput } from '@/components/report/ReportTemplate';
+import { calculateCategoryScores } from '@/lib/scoringSystem';
+import { JA_TO_KEY, type SamuraiKey } from '@/lib/samuraiTypeMap';
 
-// ★ 追加：個別コメント生成（回答テキスト→才能/挑戦 各2件）
-import { generatePersonalComments, type AnswerLite } from "@/lib/comments/generatePersonalComments";
-// ★ 追加：スコア復元用（score_pattern はテキストだけなので、ここからscoreを引く）
-import { quizQuestions } from "@/lib/quizQuestions";
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-// Supabase から読む行の型（使う列だけ）
-type Row = {
+type Search = { resultId?: string };
+
+type SamuraiResultRow = {
   id: string;
-  result_type?: SamuraiType | null;
-  // 例: { Q7: ["先行導入して…"], Q10: ["まず自分が変わる…"], Q4: ["…","…"] }
-  score_pattern: Record<string, string[]> | null;
+  created_at: string | null;
+  score_pattern: unknown;        // jsonb
+  samurai_type?: string | null;  // 日本語ラベル or key
 };
 
-export const dynamic = "force-dynamic";
+// samuraiType の全キー（samuraiTypeMap.ts の定義に合わせる）
+const ALL_KEYS = [
+  'sanada', 'oda', 'hideyoshi', 'ieyasu', 'uesugi', 'saito', 'imagawa',
+] as const;
 
-export default async function ReportPage({
-  searchParams,
-}: {
-  searchParams: { resultId?: string };
-}) {
-  const resultId = searchParams?.resultId;
-  if (!resultId) return notFound();
+function normalizeSamuraiType(val: unknown): SamuraiKey {
+  const s = String(val ?? '').trim();
+  // すでに key ならそのまま
+  if ((ALL_KEYS as readonly string[]).includes(s)) return s as SamuraiKey;
+  // 日本語ラベル → key 変換
+  const mapped = JA_TO_KEY[s as keyof typeof JA_TO_KEY];
+  return (mapped ?? 'imagawa') as SamuraiKey; // フォールバック
+}
 
-  // Supabase クライアント
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+function readEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing environment variable: ${name}`);
+  return v;
+}
+
+async function fetchResult(resultId: string): Promise<SamuraiResultRow | null> {
+  const url = readEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const anon = readEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   const supabase = createClient(url, anon);
-
-  // 必要な列だけ取得
   const { data, error } = await supabase
-    .from("samurairesults")
-    .select(["id", "result_type", "score_pattern"].join(","))
-    .eq("id", resultId)
-    .single<Row>();
-
-  if (error || !data) {
-    console.error("report supabase error", error, resultId);
-    return notFound();
+    .from('samurairesults')
+    .select('*')
+    .eq('id', resultId)
+    .single();
+  if (error) {
+    console.error('[supabase] read error', error);
+    return null;
   }
+  return data as SamuraiResultRow;
+}
 
-  // score_pattern -> 質問ごとの選択テキスト配列
-  const answersByQ =
-    data.score_pattern
-      ? Object.entries(data.score_pattern)
-          .map(([q, selected]) => ({
-            questionId: Number(String(q).replace(/^Q/i, "")),
-            selectedTexts: Array.isArray(selected) ? selected : [],
-          }))
-          .sort((a, b) => a.questionId - b.questionId)
-      : [];
+/** score_pattern（{Q1:[…], Q2:[…]} など）→ スコア関数が期待する配列形に変換 */
+function toScoreItems(
+  raw: unknown
+): { questionId: number; selectedAnswers: string[] }[] | null {
+  if (!raw) return null;
 
-  // ====== カテゴリスコア（既存ロジック想定） ======
-  const scores = calculateCategoryScores(
-    answersByQ.map((a) => ({
-      questionId: a.questionId,
-      selectedAnswers: a.selectedTexts, // 既存の関数がこのキーを見ている想定
-    }))
-  );
+  let obj: any = raw;
+  if (typeof raw === 'string') {
+    try { obj = JSON.parse(raw); } catch { return null; }
+  }
+  if (typeof obj !== 'object' || obj === null) return null;
 
-  // ====== 個別コメント用：AnswerLite[] を作る（テキスト→score を復元） ======
-  // 質問ID→{ 選択肢テキスト → score } の引きテーブルを用意
-  const scoreIndex = new Map<number, Map<string, number>>();
-  for (const q of quizQuestions) {
-    scoreIndex.set(
-      q.id,
-      new Map(q.options.map((o) => [o.text, o.score]))
+  const items: { questionId: number; selectedAnswers: string[] }[] = [];
+  for (const [key, val] of Object.entries(obj)) {
+    const qnum = Number(String(key).replace(/\D/g, ''));
+    if (!Number.isFinite(qnum)) continue;
+    const answers =
+      Array.isArray(val) ? val.map(String) : typeof val === 'string' ? [val] : [];
+    items.push({ questionId: qnum, selectedAnswers: answers });
+  }
+  return items;
+}
+
+export default async function ReportPage({ searchParams }: { searchParams: Search }) {
+  const resultId = searchParams?.resultId?.trim();
+
+  // 1) ID未指定
+  if (!resultId) {
+    return (
+      <div className="mx-auto max-w-3xl p-6">
+        <h1 className="text-2xl font-bold mb-2">診断レポートが見つかりません</h1>
+        <p className="text-sm text-muted-foreground">
+          URLに <code>resultId</code> が付いていません。メールのリンクまたは正しいURLからアクセスしてください。
+        </p>
+      </div>
     );
   }
 
-  const answersLite: AnswerLite[] = [];
-  for (const a of answersByQ) {
-    const m = scoreIndex.get(a.questionId) ?? new Map<string, number>();
-    for (const text of a.selectedTexts) {
-      const score = m.get(text) ?? 0;
-      answersLite.push({ id: a.questionId, selectedText: text, score });
-    }
+  // 2) 取得
+  const row = await fetchResult(resultId);
+  if (!row) {
+    return (
+      <div className="mx-auto max-w-3xl p-6">
+        <h1 className="text-2xl font-bold mb-2">診断レポートが見つかりません</h1>
+        <p className="text-sm text-muted-foreground">
+          resultId=<code>{resultId}</code> のデータが存在しません。送信後の保存を確認してください。
+        </p>
+      </div>
+    );
   }
 
-  // 才能/挑戦コメントを各2件ずつ自動抽出
-  const personalComments = generatePersonalComments(answersLite, 2);
+  // 3) score_pattern → 配列形へ
+  const scoreItems = toScoreItems(row.score_pattern);
+  if (!scoreItems || scoreItems.length === 0) {
+    return (
+      <div className="mx-auto max-w-3xl p-6">
+        <h1 className="text-2xl font-bold mb-2">スコア計算ができません</h1>
+        <p className="text-sm text-muted-foreground">
+          <code>score_pattern</code> が空または不正です。保存ロジックをご確認ください。
+        </p>
+        {process.env.NODE_ENV !== 'production' && (
+          <details className="mt-4">
+            <summary className="cursor-pointer">デバッグ情報</summary>
+            <pre className="text-xs whitespace-pre-wrap mt-2">
+{JSON.stringify({ resultId, raw: row.score_pattern }, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    );
+  }
 
-  // ====== スコア抽出ヘルパ ======
-  const num = (v: any) => (typeof v === "number" && !Number.isNaN(v) ? v : 0);
-  const clamp3 = (v: number) => Math.max(0, Math.min(3, v));
-  const pick = (obj: any, keys: string[]) => {
-    for (const k of keys) {
-      const v = obj?.[k];
-      if (typeof v === "number" && !Number.isNaN(v)) return v;
-    }
-    return 0;
-  };
+  // 4) カテゴリスコア計算
+  const cat = calculateCategoryScores(scoreItems as any) as any;
+  const pick = (k: string, def = 0) => (typeof cat?.[k] === 'number' ? cat[k] : def);
 
-  // 返却キーのゆらぎに対応
-  const pickKeys: Record<string, string[]> = {
-    delegation: [
-      "delegation",
-      "delegationScore",
-      "delegationScoreAvg",
-      "score_delegation",
-      "権限委譲・構造",
-      "権限委譲・構造健全度",
-    ],
-    orgDrag: [
-      "orgDrag",
-      "orgDragScore",
-      "orgDragScoreAvg",
-      "score_orgDrag",
-      "組織進化阻害",
-      "組織進化阻害度",
-    ],
-    commGap: [
-      "commGap",
-      "commGapScore",
-      "commGapScoreAvg",
-      "score_commGap",
-      "コミュ力誤差",
-    ],
-    updatePower: [
-      "updatePower",
-      "updatePowerScore",
-      "updatePowerScoreAvg",
-      "score_updatePower",
-      "アップデート力",
-    ],
-    genGap: [
-      "genGap",
-      "genGapScore",
-      "genGapScoreAvg",
-      "score_genGap",
-      "ジェネギャップ",
-      "ジェネギャップ感覚",
-      "ジェネギャップ 感覚",
-      "ジェネギャップ（感覚）",
-      "ジェネギャップ度",
-      "世代間ギャップ",
-    ],
-    harassmentRisk: [
-      "harassmentRisk",
-      "harassmentRiskScore",
-      "harassmentRiskScoreAvg",
-      "score_harassmentRisk",
-      "ハラスメント傾向",
-      "無自覚ハラスメント傾向",
-    ],
-  };
+  // 5) SamuraiKey 正規化
+  const samuraiKey = normalizeSamuraiType(row.samurai_type);
 
-  // ★ data.personalComments を同梱（ReportTemplate で利用）
-  type ReportDataWithPersonal = ReportInput & {
-    personalComments: { talents: string[]; challenges: string[] };
-  };
-
-  const reportData: ReportDataWithPersonal = {
-    resultId: data.id,
-    samuraiType: (data.result_type ?? "真田幸村型") as SamuraiType,
+  // 6) ReportTemplate が期待する data 形に整形
+  const reportData: ReportInput = {
+    resultId,
+    samuraiType: samuraiKey,
     categories: [
-      {
-        key: "delegation",
-        label: "権限委譲・構造",
-        score: clamp3(num(pick(scores, pickKeys.delegation))),
-      },
-      {
-        key: "orgDrag",
-        label: "組織進化阻害",
-        score: clamp3(num(pick(scores, pickKeys.orgDrag))),
-      },
-      {
-        key: "commGap",
-        label: "コミュ力誤差",
-        score: clamp3(num(pick(scores, pickKeys.commGap))),
-      },
-      {
-        key: "updatePower",
-        label: "アップデート力",
-        score: clamp3(num(pick(scores, pickKeys.updatePower))),
-      },
-      {
-        key: "genGap",
-        label: "ジェネギャップ",
-        score: clamp3(num(pick(scores, pickKeys.genGap))),
-      },
-      {
-        key: "harassmentRisk",
-        label: "ハラスメント傾向",
-        score: clamp3(num(pick(scores, pickKeys.harassmentRisk))),
-      },
+      { key: 'delegation',      label: '権限委譲・構造健全度', score: pick('delegation') },
+      { key: 'orgDrag',         label: '組織進化阻害',         score: pick('orgDrag') },
+      { key: 'commGap',         label: 'コミュ力誤差',         score: pick('commGap') },
+      { key: 'updatePower',     label: 'アップデート力',       score: pick('updatePower') },
+      { key: 'genGap',          label: 'ジェネギャップ感覚',   score: pick('genGap') },
+      { key: 'harassmentRisk',  label: 'ハラスメント傾向',     score: pick('harassmentRisk') },
     ],
-    // 旗は一旦デフォルト（DB列が無いので）
-    flags: { manyZeroOnQ5: false, noRightHand: false },
-    // ★ 追加：個別コメント（才能/挑戦 各2件）
-    personalComments,
+    flags: {
+      manyZeroOnQ5: false,
+      noRightHand: false,
+    },
   };
 
   return <ReportTemplate data={reportData} />;
