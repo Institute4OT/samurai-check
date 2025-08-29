@@ -50,7 +50,8 @@ async function fetchAll(resultId: string) {
     supabase.from('consult_intake')
       .select('result_id,company_size,email,name')
       .eq('result_id', resultId)
-      .order('created_at', { ascending: false }).limit(1),
+      .order('created_at', { ascending: false })
+      .limit(1),
   ]);
 
   return {
@@ -65,6 +66,40 @@ function parsePattern(raw: unknown): Record<string, any> | null {
     try { return JSON.parse(raw); } catch { return null; }
   }
   return typeof raw === 'object' ? (raw as Record<string, any>) : null;
+}
+
+// 返却形の揺れを吸収して {delegation: number,...} に正規化
+function extractScores(catAny: any): Record<string, number> {
+  if (!catAny) return {};
+  // 1) すでに number 直入れ
+  if (typeof catAny.delegation === 'number') return catAny;
+
+  // 2) scores フィールドにまとまっている
+  if (catAny.scores && typeof catAny.scores.delegation === 'number') return catAny.scores;
+
+  // 3) 各キーが {score:number}
+  const keys = ['delegation','orgDrag','commGap','updatePower','genGap','harassmentRisk'];
+  const out: Record<string, number> = {};
+  let hit = false;
+  for (const k of keys) {
+    const v = catAny?.[k];
+    if (v && typeof v.score === 'number') {
+      out[k] = v.score; hit = true;
+    }
+  }
+  if (hit) return out;
+
+  // 4) 配列 [{key,score}]
+  if (Array.isArray(catAny)) {
+    for (const it of catAny) {
+      if (it && typeof it.key === 'string' && typeof it.score === 'number') {
+        out[it.key] = it.score; hit = true;
+      }
+    }
+    if (hit) return out;
+  }
+
+  return {};
 }
 
 function isLargeCompany(size?: string | null) {
@@ -97,17 +132,18 @@ export default async function ReportPage({ searchParams }: { searchParams: Searc
   const samuraiKey = normalizeSamuraiType(row.result_type ?? row.samurai_type);
   const pattern = parsePattern(row.score_pattern);
 
-  // スコア計算（安全運転：失敗時は 0 を描画）
-  let cat: Record<string, number> = {};
+  // スコア計算（安全運転）
+  let scores: Record<string, number> = {};
   try {
     if (pattern) {
-      cat = (calculateCategoryScores as any)(pattern) ?? {};
+      const catAny = (calculateCategoryScores as any)(pattern);
+      scores = extractScores(catAny);
     }
   } catch (e) {
     console.error('[report] score calc error:', e);
-    cat = {};
+    scores = {};
   }
-  const pick = (k: string, def = 0) => (typeof cat?.[k] === 'number' ? cat[k] : def);
+  const pick = (k: string, def = 0) => (typeof scores?.[k] === 'number' ? scores[k] : def);
 
   const reportData: ReportInput = {
     resultId,
