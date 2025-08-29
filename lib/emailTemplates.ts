@@ -42,7 +42,7 @@ const SHARE_URL = APP_URL;
 
 /* ========== 申込者向け：詳細レポ受付（会社規模で分岐） ========== */
 
-type CompanySize =
+export type CompanySize =
   | '1-10' | '11-50' | '51-100' | '101-300' | '301-500' | '501-1000' | '1001+';
 
 /**
@@ -53,11 +53,11 @@ type CompanySize =
 export function renderReportRequestMailToUser(args: {
   name: string;
   resultId?: string;
-  companySize: CompanySize;
+  companySize: CompanySize | string;   // ← 少し寛容化
   consultant?: Consultant;
   email?: string; // 相談リンクに引き回す（任意）
 }) {
-  const isLarge = !['1-10', '11-50'].includes(args.companySize);
+  const isLarge = !['1-10', '11-50'].includes(args.companySize as string);
   const reportUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
   const bookingUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
 
@@ -135,7 +135,7 @@ export function renderReportRequestMailToOps(args: {
   email: string;
   name: string;
   companyName?: string;
-  companySize: CompanySize;
+  companySize: CompanySize | string; // ← 寛容化
   industry:
     | '製造' | 'IT・ソフトウェア' | '医療・福祉' | '金融' | '物流・運輸'
     | '建設' | '小売・卸' | '飲食・宿泊' | '教育・研究' | '不動産'
@@ -205,7 +205,7 @@ ${reportUrl ? `\n参考：診断レポート\n${reportUrl}\n` : ''}`.trim();
 }
 
 /* ========== 相談申込：運用(IOT)向け通知（API互換） ========== */
-// ※ Vercelビルドで要求されていた互換エクスポート
+// ※ ルート側が { consultant } を渡すため、受け取り可能にしておく
 export function renderConsultIntakeMailToOps(args: {
   name?: string;
   email?: string;
@@ -215,6 +215,7 @@ export function renderConsultIntakeMailToOps(args: {
   industry?: string;
   resultId?: string;
   message?: string;
+  consultant?: Consultant;  // ← 追加（未使用でも受け取れるように）
 }) {
   const subject = '【通知】無料相談の新規申込みがありました';
   const lines = [
@@ -225,6 +226,7 @@ export function renderConsultIntakeMailToOps(args: {
     `会社規模: ${args.companySize ?? ''}`,
     `業種: ${args.industry ?? ''}`,
     `診断ID: ${args.resultId ?? ''}`,
+    args.consultant ? `担当候補: ${args.consultant}` : '',
     args.message ? `メッセージ: ${args.message}` : '',
   ].filter(Boolean);
 
@@ -244,6 +246,6 @@ export function buildConsultEmail(args: {
   resultId?: string;
   email?: string;
 }) {
-  // 互換のため、ユーザー向け受付メールを返す（用途が近いケースが多い）
+  // 互換のため、ユーザー向け受付メールを返す（用途が近い）
   return renderConsultIntakeMailToUser(args);
 }
