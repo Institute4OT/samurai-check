@@ -1,30 +1,30 @@
 // lib/emailTemplates.ts
-// ─ メール本文のテンプレ & URLユーティリティ ─
+// ─ メール本文テンプレ & URLユーティリティ（互換APIを全部カバー）─
 
 const BRAND = 'IOT（企業の未来づくり研究所）';
 
-// ベースURL: NEXT_PUBLIC_APP_URL > VERCEL_URL > localhost
+// ===== App URL（末尾スラ無し）=====
 export const APP_URL = (
   process.env.NEXT_PUBLIC_APP_URL ||
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 ).replace(/\/+$/, '');
 
-// /report?resultId=<id>
+// ===== レポートURL =====
 export const REPORT_URL = (id: string) =>
   `${APP_URL}/report?resultId=${encodeURIComponent(id)}`;
+export const reportUrl = REPORT_URL; // エイリアス（互換のため）
 
-// SPIR 予約URL（コンサル出し分け＆resultId と email を付与）
+// ===== 相談予約URL（SPIR or 自社フォーム）=====
 const SPIR_ISHIJIMA = process.env.SPIR_ISHIJIMA_URL?.trim();
 const SPIR_MORIGAMI  = process.env.SPIR_MORIGAMI_URL?.trim();
 
 export type Consultant = 'ishijima' | 'morigami' | undefined;
 
-/**
- * 相談予約用URLを生成（SPIR直/自社フォームどちらでもOK）
- * - base: consultant に応じて SPIR_* or /consult/start
- * - クエリ: resultId, email を必要に応じて付与
- */
-export const bookingUrlFor = (c?: Consultant, resultId?: string, email?: string) => {
+export const bookingUrlFor = (
+  c?: Consultant,
+  resultId?: string,
+  email?: string
+) => {
   const base =
     c === 'morigami' ? (SPIR_MORIGAMI || `${APP_URL}/consult/start`) :
     c === 'ishijima' ? (SPIR_ISHIJIMA || `${APP_URL}/consult/start`) :
@@ -40,38 +40,32 @@ export const bookingUrlFor = (c?: Consultant, resultId?: string, email?: string)
 
 const SHARE_URL = APP_URL;
 
-/* ========== 申込者向け：詳細レポ受付（会社規模で分岐） ========== */
-
+// ===== 型 =====
 export type CompanySize =
   | '1-10' | '11-50' | '51-100' | '101-300' | '301-500' | '501-1000' | '1001+';
 
-/**
- * 申込者向け：受付完了（≤50はシェア案内、≥51は無料相談案内つき）
- * - レポURLは必ず /report?resultId=... 形式に統一
- * - 相談URLには resultId/email を付けて受け渡し安定化
- */
+// ===== 申込者向け（会社規模で文面分岐）=====
 export function renderReportRequestMailToUser(args: {
   name: string;
   resultId?: string;
-  companySize: CompanySize | string;   // ← 少し寛容化
+  companySize: CompanySize | string; // 寛容化
   consultant?: Consultant;
-  email?: string; // 相談リンクに引き回す（任意）
+  email?: string;
 }) {
-  const isLarge = !['1-10', '11-50'].includes(args.companySize as string);
-  const reportUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
-  const bookingUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
+  const isLarge = !['1-10', '11-50'].includes(String(args.companySize));
+  const rUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
+  const bUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
 
   if (isLarge) {
-    // 51名以上：無料個別相談のご案内も同梱
     const subject = '【受付】詳細レポート＋無料個別相談のご案内';
     const text = `
 ${args.name} 様
 
 詳細レポートのお申込みありがとうございます。
-${reportUrl ? `下記URLから今すぐご確認いただけます。\n\n▼レポート確認\n${reportUrl}\n` : ''}
+${rUrl ? `下記URLから今すぐご確認いただけます。\n\n▼レポート確認\n${rUrl}\n` : ''}
 
 ▼無料個別相談（読み解き／次の一手／90日アクション案）
-${bookingUrl}
+${bUrl}
 
 このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
 ${BRAND}
@@ -82,9 +76,9 @@ https://ourdx-mtg.com/
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
       <p>${args.name} 様</p>
       <p>詳細レポートのお申込みありがとうございます。</p>
-      ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
+      ${rUrl ? `<p>▼レポート確認<br/><a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
       <p>▼無料個別相談（読み解き／次の一手／90日アクション案）<br/>
-        <a href="${bookingUrl}" target="_blank" rel="noopener">${bookingUrl}</a>
+        <a href="${bUrl}" target="_blank" rel="noopener">${bUrl}</a>
       </p>
       <p>このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。</p>
       <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
@@ -95,13 +89,12 @@ https://ourdx-mtg.com/
     return { subject, text, html };
   }
 
-  // 50名以下：アンバサダー（シェアのお願い）
   const subject = '【受付】詳細レポート準備中｜ご協力のお願い';
   const text = `
 ${args.name} 様
 
 詳細レポートのお申込みありがとうございます。
-${reportUrl ? `下記URLから今すぐご確認いただけます。\n\n▼レポート確認\n${reportUrl}\n` : ''}
+${rUrl ? `下記URLから今すぐご確認いただけます。\n\n▼レポート確認\n${rUrl}\n` : ''}
 小さな団体の取り組みです。価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。
 
 ▼紹介用リンク
@@ -117,7 +110,7 @@ https://ourdx-mtg.com/
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
     <p>${args.name} 様</p>
     <p>詳細レポートのお申込みありがとうございます。</p>
-    ${reportUrl ? `<p>▼レポート確認<br/><a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
+    ${rUrl ? `<p>▼レポート確認<br/><a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
     <p>価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。</p>
     <p>▼紹介用リンク<br/><a href="${SHARE_URL}" target="_blank" rel="noopener">${SHARE_URL}</a></p>
     <p>ひとこと応援コメントも大歓迎です（このメールにご返信ください）。</p>
@@ -129,13 +122,12 @@ https://ourdx-mtg.com/
   return { subject, text, html };
 }
 
-/* ========== 運用(IOT)向け：申込内容通知 ========== */
-
+// ===== 運用向け（詳細レポ申込通知）=====
 export function renderReportRequestMailToOps(args: {
   email: string;
   name: string;
   companyName?: string;
-  companySize: CompanySize | string; // ← 寛容化
+  companySize: CompanySize | string;
   industry:
     | '製造' | 'IT・ソフトウェア' | '医療・福祉' | '金融' | '物流・運輸'
     | '建設' | '小売・卸' | '飲食・宿泊' | '教育・研究' | '不動産'
@@ -171,16 +163,15 @@ export function renderReportRequestMailToOps(args: {
   return { subject, text, html };
 }
 
-/* ========== 相談申込 自動返信テンプレ（APIから呼び出し） ========== */
+// ===== 相談申込：ユーザー向け 自動返信 =====
 export function renderConsultIntakeMailToUser(args: {
   name: string;
-  consultant?: Consultant;   // 'ishijima' | 'morigami'
-  resultId?: string;         // あれば /report?resultId=... も案内
-  email?: string;            // 相談URLにクエリで付与
+  consultant?: Consultant;
+  resultId?: string;
+  email?: string;
 }) {
-  // resultId / email をクエリで付与（SPIRでも自社フォームでも受け渡し安定）
-  const bookingUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
-  const reportUrl  = args.resultId ? REPORT_URL(args.resultId) : undefined;
+  const bUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
+  const rUrl  = args.resultId ? REPORT_URL(args.resultId) : undefined;
 
   const subject = '【受付】無料個別相談のご案内（今すぐ予約OK）';
   const text = `
@@ -190,22 +181,21 @@ ${args.name} 様
 下記の予約リンクからご都合の良い日時をご選択ください。
 
 予約リンク：
-${bookingUrl}
-${reportUrl ? `\n参考：診断レポート\n${reportUrl}\n` : ''}`.trim();
+${bUrl}
+${rUrl ? `\n参考：診断レポート\n${rUrl}\n` : ''}`.trim();
 
   const html = `
   <p>${args.name} 様</p>
   <p>無料個別相談のお申込みありがとうございます。<br>
      下記の予約リンクからご都合の良い日時をご選択ください。</p>
-  <p><a href="${bookingUrl}" target="_blank" rel="noopener">予約ページを開く</a></p>
-  ${reportUrl ? `<p>参考：レポート <a href="${reportUrl}" target="_blank" rel="noopener">${reportUrl}</a></p>` : ''}
+  <p><a href="${bUrl}" target="_blank" rel="noopener">予約ページを開く</a></p>
+  ${rUrl ? `<p>参考：レポート <a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
   `.trim();
 
   return { subject, text, html };
 }
 
-/* ========== 相談申込：運用(IOT)向け通知（API互換） ========== */
-// ※ ルート側が { consultant } を渡すため、受け取り可能にしておく
+// ===== 相談申込：運用向け通知（互換）=====
 export function renderConsultIntakeMailToOps(args: {
   name?: string;
   email?: string;
@@ -215,7 +205,7 @@ export function renderConsultIntakeMailToOps(args: {
   industry?: string;
   resultId?: string;
   message?: string;
-  consultant?: Consultant;  // ← 追加（未使用でも受け取れるように）
+  consultant?: Consultant; // 受け取れても未使用でOK
 }) {
   const subject = '【通知】無料相談の新規申込みがありました';
   const lines = [
@@ -238,14 +228,49 @@ export function renderConsultIntakeMailToOps(args: {
   return { subject, text, html };
 }
 
-/* ========== 互換：過去コードで使っていた可能性のある名前 ========== */
-// 旧コードが期待しているエクスポート名に合わせたラッパー
-export function buildConsultEmail(args: {
-  name: string;
-  consultant?: Consultant;
-  resultId?: string;
-  email?: string;
-}) {
-  // 互換のため、ユーザー向け受付メールを返す（用途が近い）
+/* ------------------------------------------------------------------
+   互換API：buildConsultEmail
+   - 旧A: buildConsultEmail({ name, consultant?, resultId?, email? })
+         → 相談自動返信（ユーザー向け）を返す
+   - 旧B: buildConsultEmail({ toName, reportUrl, bookingUrl, offerNote? })
+         → 「レポート案内 + 予約URL」を返す
+-------------------------------------------------------------------*/
+type BuildV1 = { name: string; consultant?: Consultant; resultId?: string; email?: string; };
+type BuildV2 = { toName: string; reportUrl: string; bookingUrl: string; offerNote?: string; };
+
+export function buildConsultEmail(args: BuildV1 | BuildV2) {
+  if ('toName' in args) {
+    // 旧Bパターン
+    const subject = '【受付】詳細レポートのご案内';
+    const text = `
+${args.toName} 様
+
+詳細レポートをご確認いただけます。
+▼レポート
+${args.reportUrl}
+
+▼無料個別相談（任意）
+${args.bookingUrl}
+${args.offerNote ? `\n※${args.offerNote}` : ''}
+
+${BRAND}
+`.trim();
+
+    const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
+      <p>${args.toName} 様</p>
+      <p>詳細レポートをご確認いただけます。</p>
+      <p>▼レポート<br/><a href="${args.reportUrl}" target="_blank" rel="noopener">${args.reportUrl}</a></p>
+      <p>▼無料個別相談（任意）<br/><a href="${args.bookingUrl}" target="_blank" rel="noopener">${args.bookingUrl}</a></p>
+      ${args.offerNote ? `<p style="color:#444;">※${args.offerNote}</p>` : ''}
+      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+      <p style="font-size:12px;color:#666;">${BRAND}</p>
+    </div>
+    `.trim();
+
+    return { subject, text, html };
+  }
+
+  // 旧Aパターン → 相談自動返信をそのまま返す
   return renderConsultIntakeMailToUser(args);
 }
