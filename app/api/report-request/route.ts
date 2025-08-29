@@ -1,65 +1,103 @@
 // app/api/report-request/route.ts
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { createClient } from '@supabase/supabase-js';
 import { sendMail } from '@/lib/mail';
 import {
   renderReportRequestMailToUser,
   renderReportRequestMailToOps,
+  bookingUrlFor,
+  REPORT_URL,
+  type Consultant,
 } from '@/lib/emailTemplates';
 
-// Edge では nodemailer が使えないため Node.js を明示
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-export const preferredRegion = ['hnd1']; // Tokyo(羽田)で実行
+export const preferredRegion = ['hnd1']; // Tokyo
 
-const COMPANY_SIZE_VALUES = [
-  '1-10','11-50','51-100','101-300','301-500','501-1000','1001+',
-] as const;
+// ---- 入力を厳しめに正規化（ただし未知フィールドは無視して落ちない）----
+const Schema = z
+  .object({
+    email: z.string().email(),
+    name: z.string().min(1),
+    companyName: z.string().optional(),
+    companySize: z
+      .enum(['1-10', '11-50', '51-100', '101-300', '301-500', '501-1000', '1001+'])
+      .or(z.string())
+      .optional(),
+    industry: z.string().optional(),
+    resultId: z.string().optional(),
+    consultant: z.enum(['ishijima', 'morigami']).optional(),
+  })
+  .passthrough();
 
-const INDUSTRY_VALUES = [
-  '製造','IT・ソフトウェア','医療・福祉','金融','物流・運輸',
-  '建設','小売・卸','飲食・宿泊','教育・研究','不動産',
-  'メディア・広告','エネルギー','農林水産','公共・行政',
-  'サービス','その他',
-] as const;
+function need(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`[report-request] missing env: ${name}`);
+  return v;
+}
 
-// UUID または id_ で始まるフォールバックを許容
-const ResultIdSchema = z
-  .string()
-  .regex(
-    /^(:?[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|id_[a-z0-9_-]+)$/i
-  )
-  .optional();
-
-const Payload = z.object({
-  email: z.string().email(),
-  name: z.string().min(1),
-  companyName: z.string().optional(),
-  companySize: z.enum(COMPANY_SIZE_VALUES),
-  industry: z.enum(INDUSTRY_VALUES),
-  agree: z.boolean().refine((v) => v === true),
-  resultId: ResultIdSchema,
-  // 相談系で使う値はこのAPIでは不要
-});
+// service role client（RLSをバイパスして書き込み）
+function serviceClient() {
+  return createClient(need('NEXT_PUBLIC_SUPABASE_URL'), need('SUPABASE_SERVICE_ROLE_KEY'));
+}
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => null);
-    const parsed = Payload.safeParse(body);
+    const json = await req.json().catch(() => null);
+    const parsed = Schema.safeParse(json);
     if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: 'invalid_payload' },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: 'invalid_payload' }, { status: 400 });
     }
     const p = parsed.data;
 
-    // 申込者へ
+    // 1) DB保存（失敗しても落とさない・diagnosticsに載せる）
+    const diagnostics: any = {};
+    try {
+      const sb = serviceClient();
+
+      // consult_intake へ控え（テーブルに存在する列だけを指定）
+      try {
+        await sb
+          .from('consult_intake')
+          .insert({
+            result_id: p.resultId ?? null,
+            name: p.name ?? null,
+            email: p.email ?? null,
+            company_name: p.companyName ?? null,
+            company_size: p.companySize ?? null,
+            industry: p.industry ?? null,
+          });
+        diagnostics.consult_intake = 'inserted';
+      } catch (e: any) {
+        diagnostics.consult_intake = `skip: ${e?.message || String(e)}`;
+      }
+
+      // samurairesults を更新（氏名/規模/メール/申込フラグ）
+      if (p.resultId) {
+        const { error } = await sb
+          .from('samurairesults')
+          .update({
+            name: p.name ?? null,
+            email: p.email ?? null,
+            company_size: p.companySize ?? null,
+            is_consult_request: true,
+          })
+          .eq('id', p.resultId);
+        diagnostics.samurairesults = error ? `error: ${error.message}` : 'updated';
+      }
+    } catch (e: any) {
+      diagnostics.db = `skip: ${e?.message || String(e)}`;
+      // 書き込みに失敗してもメール＆レスポンスは続行
+    }
+
+    // 2) メール作成＆送信
     const userMail = renderReportRequestMailToUser({
       name: p.name,
       resultId: p.resultId,
-      companySize: p.companySize,
+      companySize: (p.companySize ?? '') as any,
+      consultant: p.consultant as Consultant | undefined,
+      email: p.email,
     });
     await sendMail({
       to: p.email,
@@ -68,13 +106,12 @@ export async function POST(req: Request) {
       text: userMail.text,
     });
 
-    // 運用通知へ
     const opsMail = renderReportRequestMailToOps({
       email: p.email,
       name: p.name,
       companyName: p.companyName,
-      companySize: p.companySize,
-      industry: p.industry,
+      companySize: (p.companySize ?? '') as any,
+      industry: (p.industry ?? 'その他') as any,
       resultId: p.resultId,
     });
     await sendMail({
@@ -84,12 +121,15 @@ export async function POST(req: Request) {
       text: opsMail.text,
     });
 
-    return NextResponse.json({ ok: true });
+    // 3) 画面側へも予約URLを返す（任意で使える）
+    return NextResponse.json({
+      ok: true,
+      bookingUrl: bookingUrlFor(p.consultant as Consultant | undefined, p.resultId, p.email),
+      reportUrl: p.resultId ? REPORT_URL(p.resultId) : undefined,
+      diagnostics,
+    });
   } catch (e: any) {
     console.error('[api/report-request] failed:', e);
-    return NextResponse.json(
-      { ok: false, error: e?.message || String(e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
   }
 }
