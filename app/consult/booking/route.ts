@@ -36,26 +36,14 @@ type TopicKey =
   | 'other';        // 自由記入
 
 // ===== 自動割当（either のときだけ使用） =====
-// Ishi: 会議／関係性／脳／権限委譲／エグゼコーチ
-const ISHI_SET = new Set<TopicKey>([
-  'meeting', 'relations', 'brain', 'delegation', 'execCoaching',
-]);
-// Mori: エンゲージメント／キャリア／風土改善
-const MORI_SET = new Set<TopicKey>([
-  'engagement', 'career', 'culture',
-]);
+const ISHI_SET = new Set<TopicKey>(['meeting','relations','brain','delegation','execCoaching']);
+const MORI_SET = new Set<TopicKey>(['engagement','career','culture']);
 // vision は中立（どちらでも可）
 
 function autoAssign(themes: string[]): Consultant {
-  // -> Set を配列に変換しておく（downlevelIteration不要にする）
   const picked = Array.from(
-    new Set(
-      (themes || [])
-        .map(s => String(s).trim())
-        .filter(Boolean) as TopicKey[]
-    )
+    new Set((themes || []).map(s => String(s).trim()).filter(Boolean) as TopicKey[])
   );
-
   if (picked.some(k => MORI_SET.has(k))) return 'morigami';
   if (picked.some(k => ISHI_SET.has(k))) return 'ishijima';
   return 'ishijima'; // デフォルト
@@ -68,25 +56,24 @@ export async function POST(req: Request) {
     const fd = await req.formData();
 
     // --- 必須 ---
-    const name     = String(fd.get('name')  ?? '').trim();
-    const email    = String(fd.get('email') ?? '').trim();
-
+    const name  = String(fd.get('name')  ?? '').trim();
+    const email = String(fd.get('email') ?? '').trim();
     if (!name || !email) {
       return NextResponse.json({ ok: false, error: 'missing name/email' }, { status: 400 });
     }
 
     // --- 任意（hidden 推奨含む） ---
-    const resultId      = String(fd.get('resultId')     ?? '').trim();
-    const style         = String(fd.get('style')        ?? '').trim() || null;
-    const assigneePref  = (String(fd.get('assigneePref') ?? 'either').trim() || 'either') as Consultant;
-    const themes        = fd.getAll('themes').map(v => String(v).trim()).filter(Boolean);
-    const note          = String(fd.get('note')         ?? '').trim() || null;
+    const resultId     = String(fd.get('resultId')     ?? '').trim();
+    const style        = String(fd.get('style')        ?? '').trim() || null;
+    const assigneePref = (String(fd.get('assigneePref') ?? 'either').trim() || 'either') as Consultant;
+    const themes       = fd.getAll('themes').map(v => String(v).trim()).filter(Boolean);
+    const note         = String(fd.get('note')         ?? '').trim() || null;
 
-    // 申込者情報（DB保存用）
-    const companyName   = String(fd.get('companyName')  ?? '').trim() || null;
-    const companySize   = String(fd.get('companySize')  ?? '').trim() || null; // '1-10' など
-    const industry      = String(fd.get('industry')     ?? '').trim() || null;
-    const ageRange      = String(fd.get('ageRange')     ?? '').trim() || null;
+    // 申込者が任意で入れた可能性（今はフォームに出していない想定）
+    let companyName = (String(fd.get('companyName') ?? '').trim() || null);
+    let companySize = (String(fd.get('companySize') ?? '').trim() || null);
+    let industry    = (String(fd.get('industry')    ?? '').trim() || null);
+    let ageRange    = (String(fd.get('ageRange')    ?? '').trim() || null);
 
     // either のときだけ自動割当
     const assigned: Consultant =
@@ -104,25 +91,65 @@ export async function POST(req: Request) {
         { auth: { persistSession: false } },
       );
 
-      // consult_intake に保存（存在するカラムだけ使う）
+      // --- 足りない会社情報は DB から補完（samurairesults -> consult_intake 最新） ---
+      if (resultId && (!companyName || !companySize || !industry || !ageRange)) {
+        const { data: srow } = await admin
+          .from('samurairesults')
+          .select('company_name, company_size, industry, age_range')
+          .eq('id', resultId)
+          .maybeSingle();
+
+        if (srow) {
+          companyName ||= (srow as any).company_name ?? null;
+          companySize ||= (srow as any).company_size ?? null;
+          industry    ||= (srow as any).industry     ?? null;
+          ageRange    ||= (srow as any).age_range    ?? null;
+        }
+
+        if (!companyName || !companySize || !industry || !ageRange) {
+          const { data: ci } = await admin
+            .from('consult_intake')
+            .select('company_name, company_size, industry, age_range')
+            .eq('result_id', resultId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+          if (ci?.[0]) {
+            companyName ||= (ci[0] as any).company_name ?? null;
+            companySize ||= (ci[0] as any).company_size ?? null;
+            industry    ||= (ci[0] as any).industry     ?? null;
+            ageRange    ||= (ci[0] as any).age_range    ?? null;
+          }
+        }
+      }
+
+      // consult_intake に保存（存在するカラムだけ使う/ nullも許容）
       const intake: Record<string, any> = {
         result_id: resultId || null,
         email, name,
+        company_name: companyName,
+        company_size: companySize,
+        industry,
+        age_range: ageRange,
+        themes: themes.length ? themes : null,
+        note,
+        style,
+        assignee_pref: assigneePref,
+        assigned, // 実際に割り当てた担当
       };
-      if (companyName) intake.company_name = companyName;
-      if (companySize) intake.company_size = companySize;
-      if (industry)    intake.industry     = industry;
-      if (ageRange)    intake.age_range    = ageRange;
-      if (themes.length) intake.themes     = themes; // text[]/json 想定
-
       await admin.from('consult_intake').insert(intake);
 
-      // samurairesults にも補完（存在すれば）
+      // samurairesults にも補完（存在すれば）— null で上書きしないように注意
       if (resultId) {
-        const patch: Record<string, any> = {};
-        if (email)       patch.email        = email;
-        if (name)        patch.name         = name;
-        if (companySize) patch.company_size = companySize;
+        const patch: Record<string, any> = {
+          is_consult_request: true,
+          email,
+          name,
+        };
+        if (companyName !== null) patch.company_name = companyName;
+        if (companySize !== null) patch.company_size = companySize;
+        if (industry    !== null) patch.industry     = industry;
+        if (ageRange    !== null) patch.age_range    = ageRange;
+
         await admin.from('samurairesults').update(patch).eq('id', resultId);
       }
     } catch (dbErr) {
