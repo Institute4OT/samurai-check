@@ -11,53 +11,16 @@ export const revalidate = 0;
 
 type Search = { resultId?: string };
 
-type SamuraiResultRow = {
-  id: string;
-  created_at: string | null;
-  score_pattern: unknown;
-  result_type?: string | null;
-  samurai_type?: string | null;
-  company_size?: string | null;
-};
-
-type ConsultIntakeRow = {
-  result_id?: string | null;
-  company_size?: string | null;
-  email?: string | null;
-  name?: string | null;
-};
-
-const ALL_KEYS = ['sanada','oda','hideyoshi','ieyasu','uesugi','saito','imagawa'] as const;
+// --- ヘルパ ---
+const ALL_KEYS = [
+  'sanada','oda','hideyoshi','ieyasu','uesugi','saito','imagawa'
+] as const;
 
 function normalizeSamuraiType(val: unknown): SamuraiKey {
   const s = String(val ?? '').trim();
   if ((ALL_KEYS as readonly string[]).includes(s as any)) return s as SamuraiKey;
   const mapped = (JA_TO_KEY as Record<string, string | undefined>)[s];
-  return (mapped ?? 'imagawa') as SamuraiKey;
-}
-
-function need(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`[report] missing env: ${name}`);
-  return v;
-}
-
-async function fetchAll(resultId: string) {
-  const supabase = createClient(need('NEXT_PUBLIC_SUPABASE_URL'), need('NEXT_PUBLIC_SUPABASE_ANON_KEY'));
-
-  const [{ data: resRow }, { data: intakeRows }] = await Promise.all([
-    supabase.from('samurairesults').select('*').eq('id', resultId).single(),
-    supabase.from('consult_intake')
-      .select('result_id,company_size,email,name')
-      .eq('result_id', resultId)
-      .order('created_at', { ascending: false })
-      .limit(1),
-  ]);
-
-  return {
-    result: (resRow ?? null) as SamuraiResultRow | null,
-    intake: (intakeRows?.[0] ?? null) as ConsultIntakeRow | null,
-  };
+  return (mapped ?? 'imagawa') as SamuraiKey; // デフォルトはお好みで
 }
 
 function parsePattern(raw: unknown): Record<string, any> | null {
@@ -68,13 +31,13 @@ function parsePattern(raw: unknown): Record<string, any> | null {
   return typeof raw === 'object' ? (raw as Record<string, any>) : null;
 }
 
-// 返却形の揺れを吸収して {delegation: number,...} に正規化
+// 返却形の揺れを吸収して {delegation:number,...} に正規化
 function extractScores(catAny: any): Record<string, number> {
   if (!catAny) return {};
   // 1) すでに number 直入れ
   if (typeof catAny.delegation === 'number') return catAny;
 
-  // 2) scores フィールドにまとまっている
+  // 2) scores フィールド
   if (catAny.scores && typeof catAny.scores.delegation === 'number') return catAny.scores;
 
   // 3) 各キーが {score:number}
@@ -83,9 +46,7 @@ function extractScores(catAny: any): Record<string, number> {
   let hit = false;
   for (const k of keys) {
     const v = catAny?.[k];
-    if (v && typeof v.score === 'number') {
-      out[k] = v.score; hit = true;
-    }
+    if (v && typeof v.score === 'number') { out[k] = v.score; hit = true; }
   }
   if (hit) return out;
 
@@ -98,10 +59,10 @@ function extractScores(catAny: any): Record<string, number> {
     }
     if (hit) return out;
   }
-
   return {};
 }
 
+// CTA 出すか（閾値 51+ は元の仕様を踏襲）
 function isLargeCompany(size?: string | null) {
   const s = (size || '').toString();
   return ['51-100', '101-300', '301-500', '501-1000', '1001+'].includes(s);
@@ -109,32 +70,58 @@ function isLargeCompany(size?: string | null) {
 
 export default async function ReportPage({ searchParams }: { searchParams: Search }) {
   const resultId = searchParams?.resultId?.trim();
-
   if (!resultId) {
     return (
       <main className="mx-auto max-w-3xl p-6">
         <h1 className="text-2xl font-bold mb-2">診断レポートが見つかりません</h1>
-        <p className="text-sm text-muted-foreground">URLに <code>resultId</code> が付いていません。</p>
+        <p className="text-sm text-muted-foreground">
+          URLに <code>resultId</code> が付いていません。
+        </p>
       </main>
     );
   }
 
-  const { result: row, intake } = await fetchAll(resultId);
-  if (!row) {
+  // Supabase（型は any で安全運転）
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
+  // samurairesults 本体
+  const { data: resRow } = await supabase
+    .from('samurairesults')
+    .select('*')
+    .eq('id', resultId)
+    .maybeSingle();
+
+  if (!resRow) {
     return (
       <main className="mx-auto max-w-3xl p-6">
         <h1 className="text-2xl font-bold mb-2">診断レポートが見つかりません</h1>
-        <p className="text-sm text-muted-foreground">resultId=<code>{resultId}</code> のデータが存在しません。</p>
+        <p className="text-sm text-muted-foreground">
+          resultId=<code>{resultId}</code> のデータが存在しません。
+        </p>
       </main>
     );
   }
 
-  const samuraiKey = normalizeSamuraiType(row.result_type ?? row.samurai_type);
-  const pattern = parsePattern(row.score_pattern);
+  // 直近の consult_intake（あれば上書き材料に使う）
+  const { data: intakeRows } = await supabase
+    .from('consult_intake')
+    .select('result_id, company_size, email, name')
+    .eq('result_id', resultId)
+    .order('created_at', { ascending: false })
+    .limit(1);
 
-  // スコア計算（安全運転）
+  const intake = (intakeRows?.[0] ?? null) as any;
+
+  // --- 武将タイプ ---
+  const samuraiKey = normalizeSamuraiType((resRow as any).result_type ?? (resRow as any).samurai_type);
+
+  // --- スコア計算（score_pattern→calculateCategoryScores） ---
   let scores: Record<string, number> = {};
   try {
+    const pattern = parsePattern((resRow as any).score_pattern);
     if (pattern) {
       const catAny = (calculateCategoryScores as any)(pattern);
       scores = extractScores(catAny);
@@ -143,8 +130,10 @@ export default async function ReportPage({ searchParams }: { searchParams: Searc
     console.error('[report] score calc error:', e);
     scores = {};
   }
-  const pick = (k: string, def = 0) => (typeof scores?.[k] === 'number' ? scores[k] : def);
+  const pick = (k: string, def = 0) =>
+    typeof scores?.[k] === 'number' ? scores[k] : def;
 
+  // --- ReportTemplate 用データ ---
   const reportData: ReportInput = {
     resultId,
     samuraiType: samuraiKey,
@@ -156,10 +145,11 @@ export default async function ReportPage({ searchParams }: { searchParams: Searc
       { key: 'genGap',          label: 'ジェネギャップ感覚',   score: pick('genGap') },
       { key: 'harassmentRisk',  label: 'ハラスメント傾向',     score: pick('harassmentRisk') },
     ],
-    flags: { manyZeroOnQ5: false, noRightHand: false },
+    flags: { manyZeroOnQ5: false, noRightHand: false }, // 必要に応じて差し替え
   };
 
-  const companySize = row.company_size ?? intake?.company_size ?? null;
+  // --- CTA 表示用（どちらかに入っていればOK） ---
+  const companySize = (resRow as any).company_size ?? intake?.company_size ?? null;
   const email = intake?.email ?? null;
   const showCTA = isLargeCompany(companySize);
 

@@ -1,4 +1,3 @@
-// app/consult/start/page.tsx
 'use client';
 
 import { useMemo, useState } from 'react';
@@ -71,31 +70,34 @@ type ConsultantKey = 'ishijima' | 'morigami' | 'either';
 
 export default function ConsultStartPage() {
   const sp = useSearchParams();
-  const token = sp.get('token') || '';
   const resultId = sp.get('resultId') || '';
+  const emailFromQ = sp.get('email') || '';
 
   // 連絡先（必須）
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(emailFromQ);
+
+  // 会社情報（任意／運用通知用）
+  const [companyName, setCompanyName] = useState('');
+  const [companySize, setCompanySize] = useState(''); // '1-10' | '11-50' | ... の文字列でOK
+  const [industry, setIndustry] = useState('');
 
   // ご相談トピック（必須）
   const [topics, setTopics] = useState<TopicKey[]>([]);
   const [topicOther, setTopicOther] = useState('');
 
-  // 任意：到達状態・課題・優先テーマ（選択＋自由記入）
-  const [goalSel, setGoalSel] = useState<string[]>([]);
+  // 任意メモ
   const [goalFree, setGoalFree] = useState('');
-
-  const [bottleSel, setBottleSel] = useState<string[]>([]);
   const [bottleFree, setBottleFree] = useState('');
-
-  const [prioritySel, setPrioritySel] = useState<string[]>([]);
   const [priorityFree, setPriorityFree] = useState('');
 
-  // 希望スタイル（任意）
-  const [style, setStyle] = useState<StyleKey | null>(null);
+  // チェック群
+  const [goalSel, setGoalSel] = useState<string[]>([]);
+  const [bottleSel, setBottleSel] = useState<string[]>([]);
+  const [prioritySel, setPrioritySel] = useState<string[]>([]);
 
-  // 担当の希望（任意）
+  // 希望スタイル／担当
+  const [style, setStyle] = useState<StyleKey | null>(null);
   const [consultant, setConsultant] = useState<ConsultantKey>('either');
 
   const canSubmit = useMemo(() => {
@@ -111,28 +113,48 @@ export default function ConsultStartPage() {
   const toggleTopic = (k: TopicKey) =>
     setTopics(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]);
 
-  // ---- 送信処理：FormDataでPOST（自由記入の「その他」だけ補完） ----
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!canSubmit) return;
 
     const fd = new FormData(e.currentTarget);
 
-    // 「その他」自由記入だけは手動で追加
-    if (topicOther?.trim()) fd.append('themes', topicOther.trim());
+    // 必須 name/email/resultId は input[name=...] から入る。念のため明示セット。
+    fd.set('name', name.trim());
+    fd.set('email', email.trim());
+    if (resultId) fd.set('resultId', resultId);
+
+    // 担当の希望（either=そのまま文字列）
+    fd.set('assigneePref', consultant);
+
+    // 任意フィールド
+    if (companyName) fd.set('companyName', companyName);
+    if (companySize) fd.set('companySize', companySize);
+    if (industry)    fd.set('industry', industry);
+    if (style)       fd.set('style', style);
+
+    // テーマ（checkboxは独自stateなのでappend）
+    topics.forEach(t => fd.append('themes', t));
+    if (topicOther.trim()) {
+      fd.append('themes', 'other');
+      // 自由記入は note にまとめて送る（既存free文も合流）
+    }
+    const note = [goalFree, bottleFree, priorityFree, topicOther.trim()]
+      .filter(Boolean)
+      .join('\n\n');
+    if (note) fd.set('note', note);
 
     const res = await fetch('/api/consult/booking', { method: 'POST', body: fd });
-    const json = await res.json().catch(() => ({}));
-
+    const json = await res.json().catch(() => ({} as any));
     if (res.ok && (json as any)?.ok) {
-      if ((json as any).bookingUrl) {
-        window.location.href = (json as any).bookingUrl as string;
+      if (json.bookingUrl) {
+        window.location.href = json.bookingUrl as string;
       } else {
-        alert('送信しました。担当より折り返し連絡いたします。');
+        alert('送信しました。担当より折り返しご連絡します。');
       }
     } else {
-      alert(`送信に失敗しました：${(json as any)?.error || res.statusText}`);
       console.error('[consult booking] failed:', json);
+      alert(`送信に失敗しました：${json?.error || res.statusText}`);
     }
   }
 
@@ -147,18 +169,11 @@ export default function ConsultStartPage() {
         結果ID：<code>{resultId || '（自動付与）'}</code>
       </div>
 
-      {/* ✅ ここが要：POSTで /api/consult/booking へ */}
-      <form
-        onSubmit={onSubmit}
-        action="/api/consult/booking"
-        method="post"
-        className="mt-6 space-y-8"
-      >
-        {/* 送信に必要な hidden 値 */}
-        {resultId ? <input type="hidden" name="resultId" value={resultId} /> : null}
-        {token ? <input type="hidden" name="token" value={token} /> : null}
-        {/* ConsultantPicker はネイティブinputではないので hidden で渡す */}
+      <form onSubmit={onSubmit} action="/api/consult/booking" method="post" className="mt-6 space-y-8">
+        {/* hidden for backend */}
+        <input type="hidden" name="resultId" value={resultId} />
         <input type="hidden" name="assigneePref" value={consultant} />
+        <input type="hidden" name="note" value="" />
 
         {/* ご相談トピック（必須） */}
         <section>
@@ -170,8 +185,6 @@ export default function ConsultStartPage() {
               <label key={t.key} className="flex items-start gap-2 rounded-md border px-3 py-2">
                 <input
                   type="checkbox"
-                  name="themes"             // ← これでFormDataに入る
-                  value={t.key}
                   className="mt-1"
                   checked={topics.includes(t.key)}
                   onChange={() => toggleTopic(t.key)}
@@ -186,7 +199,7 @@ export default function ConsultStartPage() {
               id="topic-other"
               value={topicOther}
               onChange={e => setTopicOther(e.target.value)}
-              placeholder="例）評価面談の設計　など"
+              placeholder="例）評価面談の設計 など"
             />
           </div>
           <p className="text-xs text-muted-foreground mt-1">
@@ -202,7 +215,7 @@ export default function ConsultStartPage() {
               <Label htmlFor="name">お名前 <span className="text-red-600">*</span></Label>
               <Input
                 id="name"
-                name="name"               // ← これでFormDataに入る
+                name="name"
                 placeholder="例）山田 太郎"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -213,7 +226,7 @@ export default function ConsultStartPage() {
               <Label htmlFor="email">メールアドレス <span className="text-red-600">*</span></Label>
               <Input
                 id="email"
-                name="email"              // ← これでFormDataに入る
+                name="email"
                 type="email"
                 placeholder="you@example.com"
                 value={email}
@@ -224,91 +237,28 @@ export default function ConsultStartPage() {
           </div>
         </section>
 
-        {/* 到達したい状態（任意） */}
+        {/* 会社情報（任意） */}
         <section>
-          <h2 className="font-semibold mb-2">到達したい状態（任意）</h2>
-          <div className="grid sm:grid-cols-2 gap-2">
-            {GOAL_CHOICES.map(v => (
-              <label key={v} className="flex items-start gap-2 rounded-md border px-3 py-2">
-                <input
-                  type="checkbox"
-                  name="goalSel"
-                  value={v}
-                  className="mt-1"
-                  checked={goalSel.includes(v)}
-                  onChange={() => setGoalSel(prev => toggleArr(prev, v))}
-                />
-                <span className="text-sm">{v}</span>
-              </label>
-            ))}
+          <h2 className="font-semibold mb-2">会社情報（任意）</h2>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="companyName">会社名</Label>
+              <Input id="companyName" name="companyName" value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="株式会社◯◯" />
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <Label>会社規模</Label>
+                <Input name="companySize" placeholder="例）101-300 / 301-500" value={companySize} onChange={e=>setCompanySize(e.target.value)} />
+              </div>
+              <div>
+                <Label>業種</Label>
+                <Input name="industry" placeholder="例）製造 / 医療・福祉 など" value={industry} onChange={e=>setIndustry(e.target.value)} />
+              </div>
+            </div>
           </div>
-          <Textarea
-            className="mt-2"
-            rows={3}
-            name="goalFree"
-            placeholder="自由記入（任意）"
-            value={goalFree}
-            onChange={e => setGoalFree(e.target.value)}
-          />
         </section>
 
-        {/* いまのボトルネック・課題（任意） */}
-        <section>
-          <h2 className="font-semibold mb-2">いまのボトルネック・課題（任意）</h2>
-          <div className="grid sm:grid-cols-2 gap-2">
-            {BOTTLENECK_CHOICES.map(v => (
-              <label key={v} className="flex items-start gap-2 rounded-md border px-3 py-2">
-                <input
-                  type="checkbox"
-                  name="bottleSel"
-                  value={v}
-                  className="mt-1"
-                  checked={bottleSel.includes(v)}
-                  onChange={() => setBottleSel(prev => toggleArr(prev, v))}
-                />
-                <span className="text-sm">{v}</span>
-              </label>
-            ))}
-          </div>
-          <Textarea
-            className="mt-2"
-            rows={3}
-            name="bottleFree"
-            placeholder="自由記入（任意）"
-            value={bottleFree}
-            onChange={e => setBottleFree(e.target.value)}
-          />
-        </section>
-
-        {/* 優先順位付けしたいテーマ（任意） */}
-        <section>
-          <h2 className="font-semibold mb-2">優先順位付けしたいテーマ（任意）</h2>
-          <div className="grid sm:grid-cols-2 gap-2">
-            {PRIORITY_CHOICES.map(v => (
-              <label key={v} className="flex items-start gap-2 rounded-md border px-3 py-2">
-                <input
-                  type="checkbox"
-                  name="prioritySel"
-                  value={v}
-                  className="mt-1"
-                  checked={prioritySel.includes(v)}
-                  onChange={() => setPrioritySel(prev => toggleArr(prev, v))}
-                />
-                <span className="text-sm">{v}</span>
-              </label>
-            ))}
-          </div>
-          <Textarea
-            className="mt-2"
-            rows={3}
-            name="priorityFree"
-            placeholder="自由記入（任意）"
-            value={priorityFree}
-            onChange={e => setPriorityFree(e.target.value)}
-          />
-        </section>
-
-        {/* 希望スタイル（任意） */}
+        {/* スタイル（任意） */}
         <section>
           <h2 className="font-semibold mb-2">希望スタイル（任意）</h2>
           <div className="grid sm:grid-cols-2 gap-2">
@@ -318,9 +268,9 @@ export default function ConsultStartPage() {
                   type="radio"
                   name="style"
                   className="mt-1"
-                  value={o.key}
                   checked={style === o.key}
                   onChange={() => setStyle(o.key)}
+                  value={o.key}
                 />
                 <span className="text-sm">{o.label}</span>
               </label>
@@ -337,6 +287,14 @@ export default function ConsultStartPage() {
             showAuto
             autoLabel="どちらでもOK（空き枠優先で調整）"
           />
+        </section>
+
+        {/* 任意メモ */}
+        <section>
+          <h2 className="font-semibold mb-2">任意メモ</h2>
+          <Textarea rows={3} placeholder="到達したい状態／現状の課題／優先したい論点　など" value={goalFree} onChange={e=>setGoalFree(e.target.value)} />
+          <Textarea rows={3} className="mt-2" placeholder="その他メモ" value={bottleFree} onChange={e=>setBottleFree(e.target.value)} />
+          <Textarea rows={3} className="mt-2" placeholder="自由記入" value={priorityFree} onChange={e=>setPriorityFree(e.target.value)} />
         </section>
 
         <div className="flex items-center gap-3">
