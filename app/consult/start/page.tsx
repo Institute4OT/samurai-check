@@ -71,7 +71,7 @@ type ConsultantKey = 'ishijima' | 'morigami' | 'either';
 
 export default function ConsultStartPage() {
   const sp = useSearchParams();
-  const resultId = sp.get('resultId') || '';
+  const resultId = sp.get('resultId') || sp.get('result') || ''; // 古いURL互換
   const emailFromQ = sp.get('email') || '';
 
   // 必須
@@ -141,7 +141,7 @@ export default function ConsultStartPage() {
     const note = blocks.filter(Boolean).join('\n');
     if (note) fd.set('note', note);
 
-    // ★ここを /consult/booking に
+    // API は /consult/booking
     const res = await fetch('/consult/booking', { method: 'POST', body: fd });
     const json = await res.json().catch(() => ({} as any));
     if (res.ok && (json as any)?.ok) {
@@ -168,7 +168,7 @@ export default function ConsultStartPage() {
       </div>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-8">
-        {/* hidden for backend */}
+        {/* hidden for backend（保険） */}
         <input type="hidden" name="resultId" value={resultId} />
         <input type="hidden" name="assigneePref" value={consultant} />
         <input type="hidden" name="note" value="" />
