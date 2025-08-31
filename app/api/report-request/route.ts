@@ -1,131 +1,121 @@
 // app/api/report-request/route.ts
-import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
-import { sendMail } from '@/lib/mail';
-import {
-  renderReportRequestMailToUser,
-  renderReportRequestMailToOps,
-  bookingUrlFor,
-  REPORT_URL,
-  type Consultant,
-} from '@/lib/emailTemplates';
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { createClient } from "@supabase/supabase-js";
+import { sendMail } from "@/lib/mail"; // 既存の送信関数を使用
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const preferredRegion = ['hnd1']; // Tokyo
+// ===== Schema =====
+const BodySchema = z.object({
+  rid: z.string().uuid(),
+  name: z.string().min(1),
+  email: z.string().email(),
+  company_size: z.union([z.string(), z.number()]),
+  industry: z.string().optional().nullable(),
+  age_range: z.string().optional().nullable(),
+});
 
-// 受信ペイロード（未知キーは無視）
-const Schema = z
-  .object({
-    email: z.string().email(),
-    name: z.string().min(1),
-    companyName: z.string().optional(),
-    companySize: z
-      .enum(['1-10', '11-50', '51-100', '101-300', '301-500', '501-1000', '1001+'])
-      .or(z.string())
-      .optional(),
-    industry: z.string().optional(),   // ★ 業種（必須にしたいなら .min(1) へ）
-    ageRange: z.string().optional(),   // ★ 年齢帯
-    resultId: z.string().optional(),
-    consultant: z.enum(['ishijima', 'morigami']).optional(),
-  })
-  .passthrough();
-
-function need(name: string) {
+function mustEnv(name: string) {
   const v = process.env[name];
-  if (!v) throw new Error(`[report-request] missing env: ${name}`);
+  if (!v) throw new Error(`Missing env: ${name}`);
   return v;
 }
 
-// Service Role（RLSをバイパス）
-function serviceClient() {
-  return createClient(need('NEXT_PUBLIC_SUPABASE_URL'), need('SUPABASE_SERVICE_ROLE_KEY'));
+// ===== メール本文（テンプレ依存を排除してここで生成）=====
+function makeUserMail(params: { to: string; name: string }) {
+  const subject = "【IOT】詳細レポート申込を受け付けました";
+  const html = `
+    <div style="font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.7;">
+      <p>${params.name} 様</p>
+      <p>一般社団法人 企業の未来づくり研究所です。<br/>
+      詳細レポートのお申込み、ありがとうございます。順次作成してお送りします。</p>
+      <p>本メールは自動送信です。お心当たりがない場合は、恐れ入りますが本メールを破棄してください。</p>
+      <hr/>
+      <p style="font-size:12px;color:#666;">© Institute for Our Transformation</p>
+    </div>
+  `;
+  return { to: params.to, subject, html };
+}
+
+function makeOpsMail(params: {
+  rid: string; name: string; email: string;
+  company_size: string; industry?: string | null; age_range?: string | null;
+}) {
+  const subject = `【IOT/通知】詳細レポート申込: ${params.name} (${params.email})`;
+  const html = `
+    <div style="font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height:1.7;">
+      <h3>詳細レポート申込 受付</h3>
+      <ul>
+        <li>rid: ${params.rid}</li>
+        <li>氏名: ${params.name}</li>
+        <li>メール: ${params.email}</li>
+        <li>会社規模: ${params.company_size}</li>
+        <li>業種: ${params.industry ?? ""}</li>
+        <li>年齢帯: ${params.age_range ?? ""}</li>
+      </ul>
+    </div>
+  `;
+  const to = process.env.MAIL_OPS_TO || ""; // 環境変数未設定なら後段でスキップ
+  return { to, subject, html };
 }
 
 export async function POST(req: Request) {
   try {
-    const json = await req.json().catch(() => null);
-    const parsed = Schema.safeParse(json);
-    if (!parsed.success) {
-      return NextResponse.json({ ok: false, error: 'invalid_payload' }, { status: 400 });
-    }
-    const p = parsed.data;
+    const json = await req.json();
+    const body = BodySchema.parse(json);
 
-    // 1) DB 反映（失敗しても処理は続行）
-    const diagnostics: Record<string, any> = {};
+    const supabase = createClient(
+      mustEnv("NEXT_PUBLIC_SUPABASE_URL"),
+      mustEnv("SUPABASE_SERVICE_ROLE_KEY")
+    );
+
+    // samurairesults を更新
+    const { error: upErr } = await supabase
+      .from("samurairesults")
+      .update({
+        name: body.name,
+        email: body.email,
+        company_size: body.company_size,
+        industry: body.industry ?? null,
+        age_range: body.age_range ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", body.rid);
+
+    if (upErr) {
+      console.error("[report-request] update error:", upErr);
+      return NextResponse.json({ ok: false, message: "DB update failed" }, { status: 500 });
+    }
+
+    // ユーザー宛
     try {
-      const sb = serviceClient();
-
-      // consult_intake に控えを保存
-      try {
-        await sb.from('consult_intake').insert({
-          result_id: p.resultId ?? null,
-          name: p.name ?? null,
-          email: p.email ?? null,
-          company_name: p.companyName ?? null,
-          company_size: p.companySize ?? null,
-          industry: p.industry ?? null,     // ★ 追加
-          age_range: p.ageRange ?? null,    // ★ 追加
-        });
-        diagnostics.consult_intake = 'inserted';
-      } catch (e: any) {
-        diagnostics.consult_intake = `skip: ${e?.message || String(e)}`;
-      }
-
-      // samurairesults を更新
-      if (p.resultId) {
-        const updates: Record<string, any> = {
-          name: p.name ?? null,
-          email: p.email ?? null,
-          company_size: p.companySize ?? null,
-          industry: p.industry ?? null,      // ★ 追加
-          age_range: p.ageRange ?? null,     // ★ 追加
-          is_consult_request: true,
-        };
-        if (p.companyName) updates.company_name = p.companyName; // カラムがある場合のみ
-
-        const { error } = await sb.from('samurairesults').update(updates).eq('id', p.resultId);
-        diagnostics.samurairesults = error ? `error: ${error.message}` : 'updated';
-      }
-    } catch (e: any) {
-      diagnostics.db = `skip: ${e?.message || String(e)}`;
+      const msgUser = makeUserMail({ to: body.email, name: body.name });
+      await sendMail(msgUser as any);
+    } catch (e) {
+      console.warn("[report-request] user mail failed:", e);
+      // 失敗してもUX優先で継続
     }
 
-    // 2) メール
-    const userMail = renderReportRequestMailToUser({
-      name: p.name,
-      resultId: p.resultId,
-      companySize: (p.companySize ?? '') as any,
-      consultant: p.consultant as Consultant | undefined,
-      email: p.email,
-    });
-    await sendMail({ to: p.email, subject: userMail.subject, html: userMail.html, text: userMail.text });
+    // 運用宛（MAIL_OPS_TO が無ければ送信スキップ）
+    try {
+      const opsTo = process.env.MAIL_OPS_TO;
+      if (opsTo) {
+        const msgOps = makeOpsMail({
+          rid: body.rid,
+          name: body.name,
+          email: body.email,
+          company_size: String(body.company_size),
+          industry: body.industry ?? null,
+          age_range: body.age_range ?? null,
+        });
+        await sendMail(msgOps as any);
+      }
+    } catch (e) {
+      console.warn("[report-request] ops mail failed:", e);
+    }
 
-    const opsMail = renderReportRequestMailToOps({
-      email: p.email,
-      name: p.name,
-      companyName: p.companyName,
-      companySize: (p.companySize ?? '') as any,
-      industry: (p.industry ?? 'その他') as any,
-      resultId: p.resultId,
-    });
-    await sendMail({
-      to: (process.env.MAIL_TO_OPS || 'info@ourdx-mtg.com').trim(),
-      subject: opsMail.subject,
-      html: opsMail.html,
-      text: opsMail.text,
-    });
-
-    // 3) レスポンス（予約URL/レポートURLも返す）
-    return NextResponse.json({
-      ok: true,
-      bookingUrl: bookingUrlFor(p.consultant as Consultant | undefined, p.resultId, p.email),
-      reportUrl: p.resultId ? REPORT_URL(p.resultId) : undefined,
-      diagnostics,
-    });
+    return NextResponse.json({ ok: true });
   } catch (e: any) {
-    console.error('[api/report-request] failed:', e);
-    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
+    console.error("[report-request] fatal:", e);
+    return NextResponse.json({ ok: false, message: e?.message ?? "Bad Request" }, { status: 400 });
   }
 }
