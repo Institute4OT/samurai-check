@@ -1,3 +1,5 @@
+// lib/comments/generateComments.ts (診断直後の画面で使うやつ：カテゴリ点数から上位2／下位2のテンプレ文を返す)
+
 import { catalog, JP_LABEL, CategoryKey, flagNotes } from "./commentCatalog";
 
 type ScoreItem = { key: CategoryKey; score: number; };

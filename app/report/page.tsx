@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import ReportTemplate from "@/components/report/ReportTemplate";
 import { createClient } from "@supabase/supabase-js";
 import { calculateCategoryScores } from "@/lib/scoringSystem";
+import { generatePersonalComments } from "@/lib/comments/generatePersonalComments";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,7 @@ function mustEnv(name: string) {
   return v;
 }
 
+/** 文字列/配列/オブジェクト いずれでも Q→選択肢テキスト に正規化 */
 function normalizeScorePattern(sp: unknown): Record<string, string> {
   let raw = sp;
   if (typeof sp === "string") {
@@ -47,6 +49,7 @@ function normalizeScorePattern(sp: unknown): Record<string, string> {
   return {};
 }
 
+/** scoringSystem が期待する [{questionId, selectedAnswers}] へ変換（レーダー用） */
 function toSelections(answers: Record<string, string>) {
   const arr: { questionId: number; selectedAnswers: string[] }[] = [];
   for (const [key, val] of Object.entries(answers)) {
@@ -58,38 +61,31 @@ function toSelections(answers: Record<string, string>) {
   return arr;
 }
 
-function clamp01to3(n: any) {
+function clamp0to3(n: any) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 0;
   return Math.max(0, Math.min(3, x));
 }
 
-/** scoring の戻りが配列/オブジェクト/ラッパーのどれでも「{label, score}[]」に整える */
+/** scoring の戻りが配列/オブジェクトでも「{label,score}[]」に整える（レーダー安定化） */
 function ensureCategoryArray(scored: any): { label: string; score: number }[] {
-  // 1) そのまま配列
   if (Array.isArray(scored)) {
-    return scored
-      .map((it: any, i: number) => {
-        const label =
-          it?.label ?? it?.name ?? it?.category ?? it?.key ?? `Category ${i + 1}`;
-        const score =
-          it?.score ?? it?.value ?? it?.point ?? it?.points ?? it?.raw ?? it;
-        return { label: String(label), score: clamp01to3(score) };
-      })
-      .filter((x: any) => typeof x.label === "string");
+    return scored.map((it: any, i: number) => {
+      const label =
+        it?.label ?? it?.name ?? it?.category ?? it?.key ?? `Category ${i + 1}`;
+      const score = it?.score ?? it?.value ?? it?.point ?? it?.points ?? it?.raw ?? it;
+      return { label: String(label), score: clamp0to3(score) };
+    });
   }
-  // 2) { categories: [...] } 形式
   if (scored?.categories && Array.isArray(scored.categories)) {
     return ensureCategoryArray(scored.categories);
   }
-  // 3) { key: number | {score: number} } 形式
   if (scored && typeof scored === "object") {
     return Object.entries(scored).map(([k, v]) => ({
       label: String(k),
-      score: clamp01to3((v as any)?.score ?? v),
+      score: clamp0to3((v as any)?.score ?? v),
     }));
   }
-  // 4) それ以外は空
   return [];
 }
 
@@ -99,7 +95,8 @@ export default async function Page({ searchParams }: PageProps) {
 
   const supabase = createClient(
     mustEnv("NEXT_PUBLIC_SUPABASE_URL"),
-    mustEnv("SUPABASE_SERVICE_ROLE_KEY")
+    mustEnv("SUPABASE_SERVICE_ROLE_KEY"),
+    { auth: { persistSession: false } }
   );
 
   const { data: result, error } = await supabase
@@ -110,17 +107,28 @@ export default async function Page({ searchParams }: PageProps) {
 
   if (error || !result) notFound();
 
+  // ---- 回答（Q→選択肢テキスト）を正規化 ----
   const answers = normalizeScorePattern(result.score_pattern);
-  const selections = toSelections(answers);
 
-  const rawScore: unknown = calculateCategoryScores(selections);
-  const categories = ensureCategoryArray(rawScore);
-  const flags =
-    Array.isArray(rawScore)
-      ? undefined
-      : (rawScore && typeof rawScore === "object" && "flags" in (rawScore as any)
-          ? (rawScore as any).flags
-          : undefined);
+  // ---- レーダー用：スコア計算（従来どおり） ----
+  const selections = toSelections(answers);
+  const scoredRaw: unknown = calculateCategoryScores(selections);
+  const categoriesBase = ensureCategoryArray(scoredRaw);
+  const categories = categoriesBase.map((c, i) => {
+    const label = c?.label ? String(c.label) : `Category ${i + 1}`;
+    const score = clamp0to3(c?.score);
+    // ReportTemplate 内の参照ゆらぎ対策（label/name/key/category 全て埋める）
+    return { label, name: label, key: label, category: label, score };
+  });
+
+  // ---- 詳細レポート用：回答ベースの個別コメント（カテゴリ名は出さない） ----
+  const answersLite = Object.entries(answers).map(([k, v]) => {
+    const m = String(k).match(/\d+/);
+    const id = m ? Number(m[0]) : Number(k);
+    return { id, selectedText: String(v ?? ""), score: 0 };
+  });
+  const { talents, challenges } = generatePersonalComments(answersLite, { maxEach: 2 });
+  const insights = { positives: talents, negatives: challenges };
 
   const companySize =
     typeof result.company_size === "number"
@@ -139,8 +147,8 @@ export default async function Page({ searchParams }: PageProps) {
     ageRange: result.age_range ?? "",
 
     samuraiType: result.samurai_type ?? undefined,
-    categories,
-    flags,
+    categories,               // レーダー
+    insights,                 // ← これをテンプレの「プラス／マイナス」枠に表示（カテゴリ名は出さない）
     assignedCounselor: result.assigned_counselor ?? undefined,
   };
 

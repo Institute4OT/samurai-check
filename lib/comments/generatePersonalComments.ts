@@ -1,4 +1,5 @@
-// lib/comments/generatePersonalComments.ts
+// lib/comments/generatePersonalComments.ts (詳細レポート用：回答テキストからtalent 2件／challenge 2件を抽出して返す)
+
 import { answerRules, CommentItem } from "./answerRules";
 
 export type AnswerLite = { id: number; selectedText: string; score: number };

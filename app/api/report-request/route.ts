@@ -1,9 +1,10 @@
-// app/api/report-request/route.ts（相談フォームURLに ?rid= を付与した以外は前回版と同じ）
+// app/api/report-request/route.ts
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { sendMail } from "@/lib/mail";
 
+// ===== Request Schema =====
 const BodySchema = z.object({
   rid: z.string().uuid(),
   name: z.string().min(1),
@@ -41,6 +42,7 @@ function buttonHtml(href: string, label: string) {
     style="display:inline-block;padding:12px 18px;background:#111;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;">
     ${label}</a>`;
 }
+
 function makeUserMail(params: {
   to: string; name: string; reportUrl: string;
   counselor?: string | null; spirUrl?: string; fallbackConsultUrl: string;
@@ -55,7 +57,7 @@ function makeUserMail(params: {
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.8;">
     <p>${params.name} 様</p>
     <p>一般社団法人 <strong>企業の未来づくり研究所</strong>です。<br/>
-       詳細レポートのお申込みありがとうございます。以下のボタンからいつでもレポートにアクセスできます。</p>
+       詳細レポートのお申込みありがとうございます。以下のボタンからレポートにアクセスできます。</p>
     <div style="margin:16px 0;">${reportBtn}</div>
     <h3 style="margin-top:24px;margin-bottom:8px;">無料個別相談（30分）</h3>
     <p>レポート内容をもとに、今後の進め方をご一緒に整理します。</p>
@@ -69,13 +71,11 @@ function makeUserMail(params: {
       <li>年齢帯：${params.age_range ?? ""}</li>
       <li>担当：${counselorLabel(params.counselor)}</li>
     </ul>
-    <p style="font-size:12px;color:#888;margin-top:24px;">
-      ※本メールは自動送信です。お心当たりがない場合は破棄してください。<br/>
-      © Institute for Our Transformation
-    </p>
+    <p style="font-size:12px;color:#888;margin-top:24px;">※本メールは自動送信です。お心当たりがない場合は破棄してください。<br/>© Institute for Our Transformation</p>
   </div>`;
   return { to: params.to, subject, html };
 }
+
 function makeOpsMail(params: {
   rid: string; name: string; email: string; reportUrl: string;
   company_size?: string; company_name?: string | null; industry?: string | null; age_range?: string | null;
@@ -111,9 +111,11 @@ export async function POST(req: Request) {
 
     const supabase = createClient(
       mustEnv("NEXT_PUBLIC_SUPABASE_URL"),
-      mustEnv("SUPABASE_SERVICE_ROLE_KEY")
+      mustEnv("SUPABASE_SERVICE_ROLE_KEY"),
+      { auth: { persistSession: false } }
     );
 
+    // 1) samurairesults を更新
     const { error: upErr } = await supabase
       .from("samurairesults")
       .update({
@@ -132,19 +134,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, message: "DB update failed" }, { status: 500 });
     }
 
+    // 2) 担当者取得
     const { data: row } = await supabase
       .from("samurairesults")
       .select("assigned_counselor")
       .eq("id", body.rid)
       .single<{ assigned_counselor: "ishijima" | "morigami" | null }>();
 
+    // 3) メール作成
     const origin = getSiteOrigin(req);
     const reportUrl = `${origin}/report?rid=${body.rid}`;
     const counselor = row?.assigned_counselor ?? null;
     const spirUrl = getSpirUrl(counselor);
-    // ★ 相談フォームへ rid を付与
     const fallbackConsultUrl = `${origin}/consult/start?rid=${body.rid}`;
 
+    // ユーザー宛
     try {
       const msgUser = makeUserMail({
         to: body.email,
@@ -163,6 +167,7 @@ export async function POST(req: Request) {
       console.warn("[report-request] user mail failed:", e);
     }
 
+    // 運用宛（任意）
     try {
       const opsTo = process.env.MAIL_OPS_TO;
       if (opsTo) {
