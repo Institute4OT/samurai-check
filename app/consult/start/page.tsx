@@ -71,7 +71,8 @@ type ConsultantKey = 'ishijima' | 'morigami' | 'either';
 
 export default function ConsultStartPage() {
   const sp = useSearchParams();
-  const resultId = sp.get('resultId') || sp.get('result') || ''; // 古いURL互換
+  // ★ 追加：?rid= にも対応（既存の resultId/result も維持）
+  const resultId = sp.get('rid') || sp.get('resultId') || sp.get('result') || '';
   const emailFromQ = sp.get('email') || '';
 
   // 必須
@@ -114,7 +115,10 @@ export default function ConsultStartPage() {
     const fd = new FormData(e.currentTarget);
     fd.set('name', name.trim());
     fd.set('email', email.trim());
-    if (resultId) fd.set('resultId', resultId);
+    if (resultId) {
+      fd.set('resultId', resultId); // 既存の受け口
+      fd.set('rid', resultId);      // ★ 追加：保険（サーバ側が rid を見る場合に対応）
+    }
     fd.set('assigneePref', consultant);
     if (style) fd.set('style', style);
 
@@ -170,6 +174,8 @@ export default function ConsultStartPage() {
       <form onSubmit={onSubmit} className="mt-6 space-y-8">
         {/* hidden for backend（保険） */}
         <input type="hidden" name="resultId" value={resultId} />
+        {/* ★ 追加：サーバが rid を見る場合もカバー */}
+        <input type="hidden" name="rid" value={resultId} />
         <input type="hidden" name="assigneePref" value={consultant} />
         <input type="hidden" name="note" value="" />
 
