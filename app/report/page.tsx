@@ -127,7 +127,7 @@ export default async function Page({ searchParams }: PageProps) {
     const id = m ? Number(m[0]) : Number(k);
     return { id, selectedText: String(v ?? ""), score: 0 };
   });
-  const { talents, challenges } = generatePersonalComments(answersLite, { maxEach: 2 });
+  const { talents, challenges } = generatePersonalComments(answersLite, 2);
   const insights = { positives: talents, negatives: challenges };
 
   const companySize =
