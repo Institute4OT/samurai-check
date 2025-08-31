@@ -12,76 +12,119 @@ const INDUSTRY_OPTIONS = [
   "小売/流通", "運輸/物流", "不動産", "教育/研究", "その他",
 ];
 
-const AGE_RANGE_OPTIONS = [
-  "～29歳", "30～39歳", "40～49歳", "50～59歳", "60歳～",
-];
+// 年齢帯レンジ（SACHIKOさん要望どおり）
+const AGE_RANGE_OPTIONS = ["～39歳", "40～49歳", "50～59歳", "60～69歳", "70歳～"];
 
 export default function ReportRequestForm(_props: Props) {
-  // URLクエリから rid, company_size を拾えるようにしておく（なければ手入力でもOK）
+  // URLクエリを拾う（rid/resultId/id と company_size/companySize を許容）
   const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
-  const initialRid = url?.searchParams.get("rid") ?? "";
-  const initialCompany = url?.searchParams.get("company_size") ?? "";
+  const qp = url?.searchParams;
+  const initialRid =
+    (qp?.get("rid") ?? qp?.get("resultId") ?? qp?.get("id") ?? "").trim();
+  const initialCompany =
+    (qp?.get("company_size") ?? qp?.get("companySize") ?? "").trim();
 
   const [rid, setRid] = useState(initialRid);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [companyName, setCompanyName] = useState(""); // 任意
   const [companySize, setCompanySize] = useState(initialCompany);
   const [industry, setIndustry] = useState<string>("");
   const [ageRange, setAgeRange] = useState<string>("");
 
-  const disabled = useMemo(() => {
-    return !rid || !name || !email || !companySize;
-  }, [rid, name, email, companySize]);
+  // クエリでridが来ていたら編集不可（自動入力想定）
+  const isRidLocked = !!initialRid;
 
-  const onSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = await fetch("/api/report-request", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        rid,
-        name,
-        email,
-        company_size: companySize,
-        industry: industry || null,
-        age_range: ageRange || null,
-      }),
-    });
-    const json = await res.json();
-    if (json?.ok) {
-      alert("詳細レポート申込を受け付けました。メールをご確認ください。");
-    } else {
-      alert("送信に失敗しました。時間を置いて再度お試しください。");
-    }
-  }, [rid, name, email, companySize, industry, ageRange]);
+  const disabled = useMemo(
+    () => !rid || !name || !email || !companySize,
+    [rid, name, email, companySize]
+  );
+
+  const onSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const res = await fetch("/api/report-request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          rid,
+          name,
+          email,
+          company_size: companySize,
+          company_name: companyName || null, // 任意
+          industry: industry || null,
+          age_range: ageRange || null,
+        }),
+      });
+      const json = await res.json();
+      if (json?.ok) {
+        alert("詳細レポート申込を受け付けました。メールをご確認ください。");
+      } else {
+        alert("送信に失敗しました。時間を置いて再度お試しください。");
+      }
+    },
+    [rid, name, email, companySize, companyName, industry, ageRange]
+  );
 
   return (
     <main className="mx-auto max-w-xl p-6 space-y-6">
       <h1 className="text-2xl font-bold">詳細レポート申込</h1>
 
       <form className="space-y-4" onSubmit={onSubmit}>
+        {/* 診断結果ID（自動入力時は編集不可） */}
         <div className="space-y-1">
           <label className="block text-sm font-medium">診断結果ID（rid）</label>
           <input
-            className="w-full rounded border p-2"
-            placeholder="UUID（?rid=xxxxx が自動入力）"
+            className={`w-full rounded border p-2 ${
+              isRidLocked ? "bg-gray-100 cursor-not-allowed" : ""
+            }`}
+            placeholder={
+              isRidLocked ? "自動入力済み" : "UUID（?rid=xxxxx が自動入力）"
+            }
             value={rid}
+            readOnly={isRidLocked}
             onChange={(e) => setRid(e.target.value)}
           />
-          <p className="text-xs text-gray-500">※ 診断直後のリンクに含まれるIDを使用します。</p>
+          <p className="text-xs text-gray-500">
+            {isRidLocked
+              ? "※ 診断直後のリンクから自動入力されています。"
+              : "※ 診断直後のリンクに含まれるIDを使用します。"}
+          </p>
         </div>
 
+        {/* 氏名・メール */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1">
             <label className="block text-sm font-medium">お名前</label>
-            <input className="w-full rounded border p-2" value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              className="w-full rounded border p-2"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
           <div className="space-y-1">
             <label className="block text-sm font-medium">メール</label>
-            <input type="email" className="w-full rounded border p-2" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input
+              type="email"
+              className="w-full rounded border p-2"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
         </div>
 
+        {/* 会社名（任意） */}
+        <div className="space-y-1">
+          <label className="block text-sm font-medium">会社名（任意）</label>
+          <input
+            className="w-full rounded border p-2"
+            placeholder="例）株式会社〇〇"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+          />
+        </div>
+
+        {/* 会社規模 */}
         <div className="space-y-1">
           <label className="block text-sm font-medium">会社規模</label>
           <select
@@ -96,22 +139,36 @@ export default function ReportRequestForm(_props: Props) {
           </select>
         </div>
 
+        {/* 業種 */}
         <div className="space-y-1">
           <label className="block text-sm font-medium">業種（industry）</label>
-          <select className="w-full rounded border p-2" value={industry} onChange={(e) => setIndustry(e.target.value)}>
+          <select
+            className="w-full rounded border p-2"
+            value={industry}
+            onChange={(e) => setIndustry(e.target.value)}
+          >
             <option value="">選択してください</option>
             {INDUSTRY_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
             ))}
           </select>
         </div>
 
+        {/* 年齢帯 */}
         <div className="space-y-1">
           <label className="block text-sm font-medium">年齢帯（age_range）</label>
-          <select className="w-full rounded border p-2" value={ageRange} onChange={(e) => setAgeRange(e.target.value)}>
+          <select
+            className="w-full rounded border p-2"
+            value={ageRange}
+            onChange={(e) => setAgeRange(e.target.value)}
+          >
             <option value="">選択してください</option>
             {AGE_RANGE_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
             ))}
           </select>
         </div>

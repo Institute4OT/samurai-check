@@ -4,22 +4,20 @@ import ReportTemplate from "@/components/report/ReportTemplate";
 import { createClient } from "@supabase/supabase-js";
 import { calculateCategoryScores } from "@/lib/scoringSystem";
 
-// 毎回最新を取得（SSR, キャッシュ無効化）
 export const dynamic = "force-dynamic";
 
-type PageProps = {
-  searchParams: { rid?: string };
-};
+type PageProps = { searchParams: { rid?: string } };
 
 type SamuraiResultRow = {
   id: string;
   name?: string | null;
   email?: string | null;
   company_size?: string | number | null;
+  company_name?: string | null;
   industry?: string | null;
   age_range?: string | null;
   samurai_type?: string | null;
-  score_pattern?: unknown; // 文字列/配列/オブジェクト 何でも来る想定
+  score_pattern?: unknown;
   assigned_counselor?: "ishijima" | "morigami" | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -31,17 +29,11 @@ function mustEnv(name: string) {
   return v;
 }
 
-/** 文字列/配列/オブジェクト いずれでも Q→選択肢テキスト に正規化 */
 function normalizeScorePattern(sp: unknown): Record<string, string> {
   let raw = sp;
   if (typeof sp === "string") {
-    try {
-      raw = JSON.parse(sp);
-    } catch {
-      raw = {};
-    }
+    try { raw = JSON.parse(sp); } catch { raw = {}; }
   }
-  // 配列形式 [{q: "Q1", a:"..."}, ...] も吸収
   if (Array.isArray(raw)) {
     const obj: Record<string, string> = {};
     for (const item of raw as any[]) {
@@ -51,33 +43,59 @@ function normalizeScorePattern(sp: unknown): Record<string, string> {
     }
     return obj;
   }
-  if (raw && typeof raw === "object") {
-    return raw as Record<string, string>;
-  }
+  if (raw && typeof raw === "object") return raw as Record<string, string>;
   return {};
 }
 
-/** scoringSystem が期待する [{questionId, selectedAnswers}] へ変換 */
 function toSelections(answers: Record<string, string>) {
   const arr: { questionId: number; selectedAnswers: string[] }[] = [];
   for (const [key, val] of Object.entries(answers)) {
-    // "Q12" → 12 / "12" → 12
     const m = String(key).match(/\d+/);
     const qid = m ? Number(m[0]) : Number(key);
-    if (Number.isFinite(qid) && val) {
-      arr.push({ questionId: qid, selectedAnswers: [val] });
-    }
+    if (Number.isFinite(qid) && val) arr.push({ questionId: qid, selectedAnswers: [val] });
   }
-  // questionId 昇順でお行儀よく
   arr.sort((a, b) => a.questionId - b.questionId);
   return arr;
 }
 
+function clamp01to3(n: any) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(3, x));
+}
+
+/** scoring の戻りが配列/オブジェクト/ラッパーのどれでも「{label, score}[]」に整える */
+function ensureCategoryArray(scored: any): { label: string; score: number }[] {
+  // 1) そのまま配列
+  if (Array.isArray(scored)) {
+    return scored
+      .map((it: any, i: number) => {
+        const label =
+          it?.label ?? it?.name ?? it?.category ?? it?.key ?? `Category ${i + 1}`;
+        const score =
+          it?.score ?? it?.value ?? it?.point ?? it?.points ?? it?.raw ?? it;
+        return { label: String(label), score: clamp01to3(score) };
+      })
+      .filter((x: any) => typeof x.label === "string");
+  }
+  // 2) { categories: [...] } 形式
+  if (scored?.categories && Array.isArray(scored.categories)) {
+    return ensureCategoryArray(scored.categories);
+  }
+  // 3) { key: number | {score: number} } 形式
+  if (scored && typeof scored === "object") {
+    return Object.entries(scored).map(([k, v]) => ({
+      label: String(k),
+      score: clamp01to3((v as any)?.score ?? v),
+    }));
+  }
+  // 4) それ以外は空
+  return [];
+}
+
 export default async function Page({ searchParams }: PageProps) {
   const rid = searchParams?.rid?.trim();
-  if (!rid) {
-    notFound();
-  }
+  if (!rid) notFound();
 
   const supabase = createClient(
     mustEnv("NEXT_PUBLIC_SUPABASE_URL"),
@@ -90,43 +108,41 @@ export default async function Page({ searchParams }: PageProps) {
     .eq("id", rid)
     .single<SamuraiResultRow>();
 
-  if (error || !result) {
-    notFound();
-  }
+  if (error || !result) notFound();
 
   const answers = normalizeScorePattern(result.score_pattern);
   const selections = toSelections(answers);
 
-  // scoringSystem は selections 配列を受け取る前提（スクショの型エラー準拠）
-  const categories = calculateCategoryScores(selections);
+  const rawScore: unknown = calculateCategoryScores(selections);
+  const categories = ensureCategoryArray(rawScore);
+  const flags =
+    Array.isArray(rawScore)
+      ? undefined
+      : (rawScore && typeof rawScore === "object" && "flags" in (rawScore as any)
+          ? (rawScore as any).flags
+          : undefined);
 
-  // company_size は string/number 両対応を吸収
   const companySize =
     typeof result.company_size === "number"
       ? String(result.company_size)
       : result.company_size ?? "";
 
-  // ReportTemplate が要求するプロップは `data`
   const data = {
-    // メタ
     resultId: result.id,
     createdAt: result.created_at ?? undefined,
 
-    // 表示用 基本情報（テンプレ側で利用していれば拾えるように）
     name: result.name ?? "",
     email: result.email ?? "",
+    companyName: result.company_name ?? "",
     companySize,
     industry: result.industry ?? "",
     ageRange: result.age_range ?? "",
 
-    // レポート本体
-    samuraiType: result.samurai_type ?? undefined, // テンプレ側で未設定フォールバックがあるなら undefined でもOK
-    categories, // ← scoringSystemの戻り値（CategoryScore[] 想定）
-    // 必要なら flags などもここで追加可能
-    // flags: { manyZeroOnQ5: false, ... }
+    samuraiType: result.samurai_type ?? undefined,
+    categories,
+    flags,
+    assignedCounselor: result.assigned_counselor ?? undefined,
   };
 
-  // 型のズレはテンプレ側に合わせて `data` を渡す。テンプレの型に厳密一致していなくても
-  // 実行時は問題なく描画できるよう any を許容（スピード優先でエラー撲滅）
   return <ReportTemplate data={data as any} />;
 }
