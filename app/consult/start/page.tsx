@@ -71,7 +71,7 @@ type ConsultantKey = 'ishijima' | 'morigami' | 'either';
 
 export default function ConsultStartPage() {
   const sp = useSearchParams();
-  const resultId = sp.get('resultId') || sp.get('result') || ''; // 古いURL互換
+  const resultId = sp.get('resultId') || sp.get('result') || sp.get('rid') || '';
   const emailFromQ = sp.get('email') || '';
 
   // 必須
