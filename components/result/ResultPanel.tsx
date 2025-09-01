@@ -24,8 +24,13 @@ export default function ResultPanel({
   comments,
   onRestart,
 }: Props) {
+  // スコア（固定順の配列に正規化 ＋ 0..3クランプは normalize 側で実施）
   const categoriesFixed = useMemo(() => normalizeToCatArray(finalScores), [finalScores]);
+
+  // タイプ名の最終表示（日本語 > 生文字 > 既定値）
   const typeResolved = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
+  const displayName = typeResolved.display || samuraiType || '武将';
+
   const [copied, setCopied] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -34,7 +39,9 @@ export default function ResultPanel({
       await navigator.clipboard.writeText(rid);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {}
+    } catch {
+      /* noop */
+    }
   };
 
   return (
@@ -45,16 +52,16 @@ export default function ResultPanel({
           rid={rid}
           samuraiTypeKey={typeResolved.key}
           samuraiTypeJa={typeResolved.ja}
-          categories={categoriesFixed.map(c => ({ key: c.key, score: c.score }))}
+          categories={categoriesFixed.map((c) => ({ key: c.key, score: c.score }))}
         />
       )}
 
       <h2 className="text-2xl font-bold mb-8">診断結果</h2>
 
-      {samuraiType && (
+      {!!displayName && (
         <div className="mb-6 p-6 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 rounded-lg">
           <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-4">
-            {typeResolved.display || samuraiType}
+            {displayName}
           </h1>
           <p className="text-lg md:text-xl text-gray-700 leading-relaxed">
             {samuraiDescriptions[samuraiType as keyof typeof samuraiDescriptions] ?? ''}
@@ -67,6 +74,7 @@ export default function ResultPanel({
                 onClick={handleCopy}
                 className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
                 title="診断IDをコピー"
+                aria-label="診断IDをコピー"
               >
                 {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
               </button>
@@ -85,7 +93,7 @@ export default function ResultPanel({
       <ShareModal
         open={shareOpen}
         onClose={() => setShareOpen(false)}
-        text={`私は「${typeResolved.display || samuraiType || '武将'}」型だったよ！武将タイプ診断やってみた😄`}
+        text={`私は「${displayName}」型だったよ！武将タイプ診断やってみた😄`}
         subtitle="投稿前に内容をご確認ください。"
       />
 
@@ -94,7 +102,10 @@ export default function ResultPanel({
         <h3 className="text-xl font-semibold mb-4 text-center">カテゴリ別スコア（0〜3点）</h3>
         {categoriesFixed.map(({ key, label, score }) => {
           const emojiLabel = getEmojiLabel(score);
-          const color = score >= 2.5 ? 'text-green-600' : score >= 2.0 ? 'text-yellow-600' : 'text-red-600';
+          const color =
+            score >= 2.5 ? 'text-green-600'
+            : score >= 2.0 ? 'text-yellow-600'
+            : 'text-red-600';
           return (
             <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="font-medium">{label}</span>
@@ -141,6 +152,7 @@ export default function ResultPanel({
           src="/images/reportSample.png"
           alt="詳細レポートのサンプル画像"
           className="mx-auto w-[300px] rounded-lg shadow-md"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
         />
       </div>
 
@@ -152,7 +164,7 @@ export default function ResultPanel({
           もう一度診断する
         </button>
         <button
-          onClick={() => (window.location.href = `/form${rid ? `?resultId=${rid}` : ''}`)}
+          onClick={() => (window.location.href = `/form${rid ? `?resultId=${encodeURIComponent(rid)}` : ''}`)}
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg hover:shadow-xl"
         >
           あなた専用の詳細レポートを受け取る（無料）
@@ -166,7 +178,12 @@ export default function ResultPanel({
         rel="noopener noreferrer"
         className="mt-8 flex items-center justify-center text-gray-500 text-sm space-x-2 hover:text-gray-700"
       >
-        <img src="/images/logo.png" alt="企業の未来づくり研究所ロゴ" className="w-[40px] h-auto opacity-70 hover:opacity-90" />
+        <img
+          src="/images/logo.png"
+          alt="企業の未来づくり研究所ロゴ"
+          className="w-[40px] h-auto opacity-70 hover:opacity-90"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+        />
         <span>© 一般社団法人 企業の未来づくり研究所</span>
       </a>
     </div>

@@ -2,57 +2,103 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import type { CatItem, CatKey } from '@/lib/scoreSnapshot'; // ← 既に作成済みの型を再利用
+import type { CatItem } from '@/lib/scoreSnapshot';
 
 type Props = {
+  /** 診断結果ID（必須） */
   rid: string;
-  samuraiTypeKey?: string; // 例: 'sanada'
-  samuraiTypeJa?: string;  // 例: '真田幸村型'
-  /** レーダー用の確定カテゴリ [{ key, score }] 最低限この形があればOK */
+  /** 表示用のメール（任意：フォーム初期値にも流用） */
+  email?: string;
+  /** 例: 'sanada'（任意） */
+  samuraiTypeKey?: string;
+  /** 例: '真田幸村型'（任意） */
+  samuraiTypeJa?: string;
+  /** レーダー用の確定カテゴリ（0〜3の数値に正規化） */
   categories: Array<Pick<CatItem, 'key' | 'score'>>;
 };
 
+/**
+ * 結果画面でマウント時に一度だけ：
+ *  - rid / email / scores を localStorage に保存
+ *  - /api/results/finalize を叩いてスナップショット確定（多重実行ガード）
+ *  - ページ離脱時の送信漏れを sendBeacon で補完
+ */
 export default function FinalizeOnMount({
   rid,
+  email,
   samuraiTypeKey,
   samuraiTypeJa,
   categories,
 }: Props) {
-  const once = useRef(false);
+  const started = useRef(false);
+  const finished = useRef(false);
 
   useEffect(() => {
-    if (once.current) return;
-    once.current = true;
+    if (started.current) return;
+    started.current = true;
 
-    // 体感高速化：直近スコアを保存（レポート側で上書き表示に使える）
+    // 1) クライアント保持（フォーム/相談ページの自動復元に使用）
     try {
-      const simple = categories.map(c => ({ key: c.key, score: clamp03(c.score) }));
-      localStorage.setItem('lastScores', JSON.stringify(simple));
-    } catch {}
+      localStorage.setItem('samurai:lastRid', rid);
+      if (email) localStorage.setItem('samurai:lastEmail', String(email));
+      const simple = categories.map((c) => ({ key: c.key, score: clamp03(c.score) }));
+      localStorage.setItem('samurai:lastScores', JSON.stringify(simple));
+    } catch {
+      /* 何もしない（Safariプライベート等でも落とさない） */
+    }
 
-    // サーバ確定（既に確定済みならAPI側で無視されます）
-    (async () => {
+    // 2) サーバ確定ペイロード（共有）
+    const payload = {
+      rid,
+      email: email ?? undefined,
+      samuraiTypeKey,
+      samuraiTypeJa,
+      categories: categories.map((c) => ({ key: c.key, score: clamp03(c.score) })),
+    };
+    const bodyStr = JSON.stringify(payload);
+
+    // 3) 送信本体（fetch keepalive）
+    const controller = new AbortController();
+    const send = async () => {
+      if (finished.current) return;
       try {
-        const body = {
-          rid,
-          samuraiTypeKey,
-          samuraiTypeJa,
-          categories: categories.map((c) => ({
-            key: c.key,
-            score: clamp03(c.score),
-          })),
-        };
         await fetch('/api/results/finalize', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
+          body: bodyStr,
+          keepalive: true, // 離脱中でも可能な限り送る
+          signal: controller.signal,
         });
+        finished.current = true;
       } catch (e) {
-        // エラーでもUIは止めない（監査ログはサーバ側で）
-        console.error('[finalize] failed:', e);
+        // fetch 失敗は onpagehide での sendBeacon に託す
+        // コンソールだけ出して UI は止めない
+        console.warn('[finalize] fetch failed, will try beacon on pagehide.', e);
       }
-    })();
-  }, [rid, samuraiTypeKey, samuraiTypeJa, categories]);
+    };
+    void send();
+
+    // 4) ページ離脱時の最終送信（まだ完了していなければ beacon）
+    const onPageHide = () => {
+      if (finished.current) return;
+      try {
+        const blob = new Blob([bodyStr], { type: 'application/json' });
+        // 送信できなくても戻り値 false になるだけ。UIは止めない。
+        navigator.sendBeacon?.('/api/results/finalize', blob);
+        finished.current = true;
+      } catch {
+        /* noop */
+      }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
+
+    return () => {
+      controller.abort();
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+    };
+  }, [rid, email, samuraiTypeKey, samuraiTypeJa, categories]);
 
   return null;
 }
