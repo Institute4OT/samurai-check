@@ -1,40 +1,38 @@
+// app/form/page.tsx
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 
-/** UUIDっぽい文字列かザックリ判定（ハイフン有り無しどちらもOK） */
-function isUuidish(v: string | null | undefined): v is string {
+/** 汎用ID判定：UUID or ULID or 16文字以上の英数/[_-] を許容（boolean返し） */
+function isIdish(v: string | null | undefined): boolean {
   if (!v) return false;
   const s = v.trim();
-  return /^[0-9a-fA-F-]{30,}$/.test(s);
+  const uuid =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/; // ULID（Crockford Base32）
+  const generic = /^[A-Za-z0-9_-]{16,}$/;  // NanoID等の汎用
+  return uuid.test(s) || ulid.test(s) || generic.test(s);
 }
 
-/** URL文字列から rid を抜き出す */
+/** URLから rid を抽出（rid or id） */
 function extractRidFromUrl(urlLike: string | null | undefined): string | null {
   try {
     if (!urlLike) return null;
     const u = new URL(urlLike);
     const cand = u.searchParams.get('rid') || u.searchParams.get('id');
-    return isUuidish(cand) ? cand! : null;
+    return cand && cand.trim() ? cand.trim() : null;
   } catch {
     return null;
   }
 }
 
-/** localStorage の候補キーを総当りして rid を探す */
+/** localStorage から推定 */
 function readRidFromStorage(): string | null {
-  const keys = [
-    'samurai:rid',
-    'samurai_last_rid',
-    'reportRid',
-    'resultId',
-    'rid',
-  ];
+  const keys = ['samurai:rid', 'samurai_last_rid', 'reportRid', 'resultId', 'rid'];
   for (const k of keys) {
     try {
       const v = localStorage.getItem(k);
-      if (isUuidish(v)) return v!;
+      if (v && v.trim()) return v.trim();
     } catch {}
   }
   return null;
@@ -62,55 +60,43 @@ const industries = [
   'その他',
 ] as const;
 
-const ageBands = [
-  '～29歳',
-  '30～39歳',
-  '40～49歳',
-  '50～59歳',
-  '60歳以上',
-] as const;
+const ageBands = ['～29歳', '30～39歳', '40～49歳', '50～59歳', '60歳以上'] as const;
 
 export default function ReportRequestFormPage() {
-  const router = useRouter();
-
-  const [rid, setRid] = useState('');
+  const [rid, setRid] = useState<string>('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
-  const [companySize, setCompanySize] = useState<typeof companySizes[number]>('101～300名');
-  const [industry, setIndustry] = useState<typeof industries[number]>('金融・保険');
-  const [ageBand, setAgeBand] = useState<typeof ageBands[number]>('50～59歳');
+  const [companySize, setCompanySize] =
+    useState<(typeof companySizes)[number]>('101～300名');
+  const [industry, setIndustry] =
+    useState<(typeof industries)[number]>('金融・保険');
+  const [ageBand, setAgeBand] =
+    useState<(typeof ageBands)[number]>('50～59歳');
 
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** 初回マウント時：rid を ①URL ②localStorage ③直前URL の順で自動取得 */
+  // ①URL → ②localStorage → ③referrer の順で 1 回だけ解決して保存
   useEffect(() => {
-    // ① 現在URL
     const fromSelf = extractRidFromUrl(window.location.href);
-    // ② localStorage
-    const fromStorage = readRidFromStorage();
-    // ③ document.referrer
+    const fromStore = readRidFromStorage();
     const fromRef = extractRidFromUrl(document.referrer);
-
-    const found = fromSelf || fromStorage || fromRef;
+    const found = fromSelf || fromStore || fromRef;
     if (found) {
       setRid(found);
-      try {
-        localStorage.setItem('samurai:rid', found);
-      } catch {}
+      try { localStorage.setItem('samurai:rid', found); } catch {}
     }
   }, []);
 
   const isReadyToSubmit = useMemo(() => {
     return (
-      isUuidish(rid) &&
+      rid.trim().length > 0 &&
+      isIdish(rid) &&
       name.trim().length > 0 &&
       /\S+@\S+\.\S+/.test(email) &&
-      companySize &&
-      industry &&
-      ageBand
+      companySize && industry && ageBand
     );
   }, [rid, name, email, companySize, industry, ageBand]);
 
@@ -118,7 +104,6 @@ export default function ReportRequestFormPage() {
     e.preventDefault();
     setMessage(null);
     setError(null);
-
     if (!isReadyToSubmit) return;
 
     setSubmitting(true);
@@ -127,7 +112,8 @@ export default function ReportRequestFormPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rid: rid.trim(),
+          rid: rid.trim(),          // ← 正式名
+          resultId: rid.trim(),     // ← 互換のため重複送信（段階的廃止OK）
           name: name.trim(),
           email: email.trim(),
           company: company.trim() || null,
@@ -137,17 +123,10 @@ export default function ReportRequestFormPage() {
         }),
       });
 
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
 
       setMessage('送信しました。数分以内にメールをご確認ください！');
-      try {
-        localStorage.setItem('samurai:rid', rid.trim());
-      } catch {}
-      // 送信後はトップ等に戻したい場合は下記を活かす
-      // router.push('/thanks');
+      try { localStorage.setItem('samurai:rid', rid.trim()); } catch {}
     } catch (err: any) {
       setError(`送信に失敗しました：${err?.message ?? String(err)}`);
     } finally {
@@ -163,22 +142,21 @@ export default function ReportRequestFormPage() {
         {/* rid */}
         <div>
           <label className="block text-sm font-medium mb-1">
-            診断結果ID（rid）
+            結果ID（rid）
           </label>
           <input
             type="text"
-            inputMode="text"
             value={rid}
             onChange={(e) => setRid(e.target.value)}
-            placeholder="UUID（診断直後のリンクから自動入力）"
+            placeholder="UUID / ULID / NanoID（結果ページから自動入力）"
             className="w-full rounded-md border px-3 py-2"
           />
           {!rid && (
             <p className="mt-2 text-xs text-gray-500">
-              直前の診断結果ページから来ると自動入力されます。見つからない場合は、
-              結果ページのURLの
-              <code className="px-1 bg-gray-100 rounded">?rid=...</code>
-              の値を貼り付けてください。
+              直前の結果ページから来ると自動入力されます。見つからない場合は、
+              結果ページURLの
+              <code className="px-1 bg-gray-100 rounded">?rid=…</code>
+              を貼り付けてください。
             </p>
           )}
         </div>
@@ -286,13 +264,15 @@ export default function ReportRequestFormPage() {
                 : 'bg-black hover:opacity-90'
             }`}
           >
-            {submitting ? '送信中...' : '送信'}
+            {submitting ? '送信中…' : '送信'}
           </button>
-          {!isUuidish(rid) && (
-            <p className="mt-2 text-xs text-rose-600">
-              ridが未入力／形式不正のため送信できません。
+
+          {rid.trim().length > 0 && !isIdish(rid) && (
+            <p className="mt-2 text-xs text-amber-600">
+              ※ ID形式が想定外ですがこのまま送信できます（サーバー側で照合します）
             </p>
           )}
+
           {message && (
             <p className="mt-3 text-sm text-emerald-700">{message}</p>
           )}
@@ -302,11 +282,11 @@ export default function ReportRequestFormPage() {
 
       <hr className="my-8" />
       <div className="text-xs text-gray-500 space-y-1">
-        <p>※ ridは診断結果ページのURLに含まれるIDです。</p>
+        <p>※ 結果ID（rid）は結果ページのURLに含まれるIDです（UUID/ULID/NanoIDいずれも可）。</p>
         <p>
           例：
           <code className="px-1 bg-gray-100 rounded">
-            https://samurai-check.vercel.app/result?rid=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+            https://samurai-check.vercel.app/result?rid=xxxxxxxx…
           </code>
         </p>
       </div>

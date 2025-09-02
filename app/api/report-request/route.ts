@@ -4,23 +4,12 @@ import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { sendMail } from "@/lib/mail";
 
-// ===== Request Schema =====
-const BodySchema = z.object({
-  rid: z.string().uuid(),
-  name: z.string().min(1),
-  email: z.string().email(),
-  company_size: z.union([z.string(), z.number()]),
-  company_name: z.string().optional().nullable(),
-  industry: z.string().optional().nullable(),
-  age_range: z.string().optional().nullable(),
-});
-
+/* ====== helpers ====== */
 function mustEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
 }
-
 function getSiteOrigin(req: Request) {
   const env = process.env.NEXT_PUBLIC_SITE_URL;
   if (env && /^https?:\/\//i.test(env)) return env.replace(/\/+$/, "");
@@ -43,6 +32,32 @@ function buttonHtml(href: string, label: string) {
     ${label}</a>`;
 }
 
+/** UUID/ULID/NanoID をゆるく許容（弾かず、非標準は警告ログのみ） */
+function isIdish(v: string) {
+  const s = v.trim();
+  const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;          // ULID（Base32, 大文字）
+  const generic = /^[A-Za-z0-9_-]{16,}$/;            // NanoID 等の汎用
+  return uuid.test(s) || ulid.test(s) || generic.test(s);
+}
+
+/** 受信payloadの正規化（キー名の揺れを吸収） */
+function normalizeBody(input: any) {
+  const ridSrc = input?.rid ?? input?.resultId ?? "";
+  const rid = String(ridSrc || "").trim();
+
+  const name = String(input?.name ?? "").trim();
+  const email = String(input?.email ?? "").trim();
+
+  const company_size = input?.company_size ?? input?.companySize ?? "";
+  const company_name = input?.company_name ?? input?.company ?? null;
+  const industry = input?.industry ?? null;
+  const age_range = input?.age_range ?? input?.age_band ?? null;
+
+  return { rid, name, email, company_size, company_name, industry, age_range };
+}
+
+/* ====== Mail builders ====== */
 function makeUserMail(params: {
   to: string; name: string; reportUrl: string;
   counselor?: string | null; spirUrl?: string; fallbackConsultUrl: string;
@@ -104,10 +119,27 @@ function makeOpsMail(params: {
   return { to, subject, html };
 }
 
+/* ====== 入力スキーマ（ゆるく・統一） ====== */
+const Schema = z.object({
+  rid: z.string().min(8),                      // ← uuid() から緩和
+  name: z.string().min(1),
+  email: z.string().email(),
+  company_size: z.union([z.string(), z.number()]),
+  company_name: z.string().optional().nullable(),
+  industry: z.string().optional().nullable(),
+  age_range: z.string().optional().nullable(),
+});
+
 export async function POST(req: Request) {
   try {
-    const json = await req.json();
-    const body = BodySchema.parse(json);
+    const json = await req.json().catch(() => ({}));
+    const normalized = normalizeBody(json);
+    const body = Schema.parse(normalized);
+
+    // 形式は緩く検査：不一致はログのみ
+    if (!isIdish(body.rid)) {
+      console.warn("[report-request] non-standard rid received:", body.rid);
+    }
 
     const supabase = createClient(
       mustEnv("NEXT_PUBLIC_SUPABASE_URL"),
@@ -141,14 +173,13 @@ export async function POST(req: Request) {
       .eq("id", body.rid)
       .single<{ assigned_counselor: "ishijima" | "morigami" | null }>();
 
-    // 3) メール作成
+    // 3) メール作成・送信
     const origin = getSiteOrigin(req);
     const reportUrl = `${origin}/report?rid=${body.rid}`;
     const counselor = row?.assigned_counselor ?? null;
     const spirUrl = getSpirUrl(counselor);
     const fallbackConsultUrl = `${origin}/consult/start?rid=${body.rid}`;
 
-    // ユーザー宛
     try {
       const msgUser = makeUserMail({
         to: body.email,
@@ -167,7 +198,6 @@ export async function POST(req: Request) {
       console.warn("[report-request] user mail failed:", e);
     }
 
-    // 運用宛（任意）
     try {
       const opsTo = process.env.MAIL_OPS_TO;
       if (opsTo) {

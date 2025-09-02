@@ -56,9 +56,8 @@ export default function ConsultStartForm() {
     fd.set('name', name.trim());
     fd.set('email', email.trim());
     if (resultId) {
-      // ← 両方入れておく（API側が rid / resultId どっちで来てもOKにするため）
-      fd.set('resultId', resultId);
-      fd.set('rid', resultId);
+      fd.set('rid', resultId);      // 正式名
+      fd.set('resultId', resultId); // 互換
     }
     fd.set('assigneePref', consultant);
     if (style) fd.set('style', style);
@@ -91,8 +90,8 @@ export default function ConsultStartForm() {
     const json = await res.json().catch(() => ({} as any));
 
     if (res.ok && (json as any)?.ok) {
-      if (json.bookingUrl) {
-        window.location.href = String(json.bookingUrl);
+      if ((json as any).bookingUrl) {
+        window.location.href = String((json as any).bookingUrl);
       } else {
         alert('送信しました。担当より折り返しご連絡します。');
       }
@@ -111,13 +110,13 @@ export default function ConsultStartForm() {
 
       {/* 結果ID（自動復元） */}
       <div className="mt-3 rounded-lg border px-4 py-2 text-xs text-muted-foreground">
-        結果ID：<code>{resultId || '（自動付与）'}</code>
+        結果ID（rid）：<code>{resultId || '（自動付与）'}</code>
       </div>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-8">
         {/* hidden（保険：両方入れる） */}
-        <input type="hidden" name="resultId" value={resultId} />
         <input type="hidden" name="rid" value={resultId} />
+        <input type="hidden" name="resultId" value={resultId} />
         <input type="hidden" name="assigneePref" value={consultant} />
         <input type="hidden" name="note" value="" />
 
