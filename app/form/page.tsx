@@ -1,238 +1,315 @@
-// app/form/page.tsx
 'use client';
 
-import { useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
-/* ---------- マスタ ---------- */
-const COMPANY_SIZE_OPTIONS = [
-  '～10名',
+/** UUIDっぽい文字列かザックリ判定（ハイフン有り無しどちらもOK） */
+function isUuidish(v: string | null | undefined): v is string {
+  if (!v) return false;
+  const s = v.trim();
+  return /^[0-9a-fA-F-]{30,}$/.test(s);
+}
+
+/** URL文字列から rid を抜き出す */
+function extractRidFromUrl(urlLike: string | null | undefined): string | null {
+  try {
+    if (!urlLike) return null;
+    const u = new URL(urlLike);
+    const cand = u.searchParams.get('rid') || u.searchParams.get('id');
+    return isUuidish(cand) ? cand! : null;
+  } catch {
+    return null;
+  }
+}
+
+/** localStorage の候補キーを総当りして rid を探す */
+function readRidFromStorage(): string | null {
+  const keys = [
+    'samurai:rid',
+    'samurai_last_rid',
+    'reportRid',
+    'resultId',
+    'rid',
+  ];
+  for (const k of keys) {
+    try {
+      const v = localStorage.getItem(k);
+      if (isUuidish(v)) return v!;
+    } catch {}
+  }
+  return null;
+}
+
+const companySizes = [
+  '1～10名',
   '11～50名',
   '51～100名',
   '101～300名',
-  '301～500名',
-  '501～1000名',
+  '301～1000名',
   '1001名以上',
-];
+] as const;
 
-const INDUSTRY_OPTIONS = [
-  '製造業',
-  '情報・通信',
+const industries = [
+  '製造',
+  'IT・通信',
   '医療・福祉',
   '金融・保険',
-  '建設',
-  '卸売・小売',
-  '教育・学術',
-  '公務・団体',
+  '建設・不動産',
+  '運輸・物流',
+  '公務・官公庁',
+  '教育・研究',
+  '小売・サービス',
   'その他',
-];
+] as const;
 
-const AGE_RANGE_OPTIONS = ['～39歳', '40～49歳', '50～59歳', '60～69歳', '70歳～'];
+const ageBands = [
+  '～29歳',
+  '30～39歳',
+  '40～49歳',
+  '50～59歳',
+  '60歳以上',
+] as const;
 
-/* ---------- rid 復元（URL > localStorage > なし） ---------- */
-function useResolvedRid() {
-  const sp = useSearchParams();
-  const ridFromUrl =
-    sp.get('resultId') ||
-    sp.get('rid') ||
-    sp.get('result') ||
-    sp.get('id') ||
-    '';
+export default function ReportRequestFormPage() {
+  const router = useRouter();
 
-  const [rid, setRid] = useState<string>('');
-  const [ridLocked, setRidLocked] = useState(false);
-
-  useEffect(() => {
-    const fromStorage =
-      localStorage.getItem('samurai:lastRid') ||
-      localStorage.getItem('samurai_last_rid') ||
-      sessionStorage.getItem('samurai:lastRid') ||
-      '';
-
-    const v = ridFromUrl || fromStorage || '';
-    setRid(v);
-    setRidLocked(Boolean(ridFromUrl));
-
-    // URL に rid があれば最新値として保存（/form 直叩きでも復元できる）
-    if (ridFromUrl) {
-      localStorage.setItem('samurai:lastRid', ridFromUrl);
-    }
-  }, [ridFromUrl]);
-
-  return { rid, setRid, ridLocked };
-}
-
-/* ---------- ページ ---------- */
-export default function FormPage() {
-  const { rid, setRid, ridLocked } = useResolvedRid();
-
+  const [rid, setRid] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [companySize, setCompanySize] = useState('');
-  const [industry, setIndustry] = useState('');
-  const [ageRange, setAgeRange] = useState('');
+  const [company, setCompany] = useState('');
+  const [companySize, setCompanySize] = useState<typeof companySizes[number]>('101～300名');
+  const [industry, setIndustry] = useState<typeof industries[number]>('金融・保険');
+  const [ageBand, setAgeBand] = useState<typeof ageBands[number]>('50～59歳');
 
-  const emailOk = useMemo(() => /\S+@\S+\.\S+/.test(email.trim()), [email]);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const disabled = useMemo(
-    () => !rid || !name.trim() || !emailOk || !companySize || !industry || !ageRange,
-    [rid, name, emailOk, companySize, industry, ageRange]
-  );
+  /** 初回マウント時：rid を ①URL ②localStorage ③直前URL の順で自動取得 */
+  useEffect(() => {
+    // ① 現在URL
+    const fromSelf = extractRidFromUrl(window.location.href);
+    // ② localStorage
+    const fromStorage = readRidFromStorage();
+    // ③ document.referrer
+    const fromRef = extractRidFromUrl(document.referrer);
 
-  const onSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
+    const found = fromSelf || fromStorage || fromRef;
+    if (found) {
+      setRid(found);
+      try {
+        localStorage.setItem('samurai:rid', found);
+      } catch {}
+    }
+  }, []);
 
-      const body = {
-        rid: rid.trim(),
-        name: name.trim(),
-        email: email.trim(),
-        company_size: companySize,
-        industry,
-        age_range: ageRange,
-        company_name: companyName || undefined, // 任意
-      };
+  const isReadyToSubmit = useMemo(() => {
+    return (
+      isUuidish(rid) &&
+      name.trim().length > 0 &&
+      /\S+@\S+\.\S+/.test(email) &&
+      companySize &&
+      industry &&
+      ageBand
+    );
+  }, [rid, name, email, companySize, industry, ageBand]);
 
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setMessage(null);
+    setError(null);
+
+    if (!isReadyToSubmit) return;
+
+    setSubmitting(true);
+    try {
       const res = await fetch('/api/report-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          rid: rid.trim(),
+          name: name.trim(),
+          email: email.trim(),
+          company: company.trim() || null,
+          company_size: companySize,
+          industry,
+          age_band: ageBand,
+        }),
       });
 
       if (!res.ok) {
-        const t = await res.text().catch(() => '');
-        alert('送信に失敗しました。' + (t ? `\n${t}` : ''));
-        return;
+        const t = await res.text();
+        throw new Error(t || `HTTP ${res.status}`);
       }
 
-      alert('詳細レポート申込を受け付けました。メールをご確認ください。');
-    },
-    [rid, name, email, companySize, industry, ageRange, companyName]
-  );
+      setMessage('送信しました。数分以内にメールをご確認ください！');
+      try {
+        localStorage.setItem('samurai:rid', rid.trim());
+      } catch {}
+      // 送信後はトップ等に戻したい場合は下記を活かす
+      // router.push('/thanks');
+    } catch (err: any) {
+      setError(`送信に失敗しました：${err?.message ?? String(err)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <main className="mx-auto max-w-3xl px-6 py-10">
       <h1 className="text-2xl font-bold mb-6">詳細レポート申込</h1>
 
-      <form className="space-y-6" onSubmit={onSubmit}>
-        {/* 診断結果ID */}
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* rid */}
         <div>
-          <label className="block text-sm font-medium">診断結果ID（rid）</label>
+          <label className="block text-sm font-medium mb-1">
+            診断結果ID（rid）
+          </label>
           <input
-            className="mt-1 w-full rounded border px-3 py-2"
             type="text"
-            name="rid"
+            inputMode="text"
             value={rid}
-            onChange={(e) => setRid(e.target.value.trim())}
+            onChange={(e) => setRid(e.target.value)}
             placeholder="UUID（診断直後のリンクから自動入力）"
-            readOnly={ridLocked}
+            className="w-full rounded-md border px-3 py-2"
           />
-          <p className="mt-1 text-xs text-gray-500">
-            ※ URLに含まれていない場合も、直前の診断IDを自動復元します。
-          </p>
+          {!rid && (
+            <p className="mt-2 text-xs text-gray-500">
+              直前の診断結果ページから来ると自動入力されます。見つからない場合は、
+              結果ページのURLの
+              <code className="px-1 bg-gray-100 rounded">?rid=...</code>
+              の値を貼り付けてください。
+            </p>
+          )}
         </div>
 
-        {/* 氏名・メール */}
+        {/* name & email */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium">お名前</label>
+            <label className="block text-sm font-medium mb-1">お名前</label>
             <input
-              className="mt-1 w-full rounded border px-3 py-2"
+              type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              autoComplete="name"
+              className="w-full rounded-md border px-3 py-2"
+              placeholder="例）今川ヨシタカ"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium">メール</label>
+            <label className="block text-sm font-medium mb-1">メール</label>
             <input
-              className="mt-1 w-full rounded border px-3 py-2"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
+              className="w-full rounded-md border px-3 py-2"
+              placeholder="you@example.com"
             />
-            {!emailOk && email.length > 0 && (
-              <p className="mt-1 text-xs text-red-600">メールアドレスの形式で入力してください。</p>
-            )}
           </div>
         </div>
 
-        {/* 会社名（任意） */}
+        {/* company */}
         <div>
-          <label className="block text-sm font-medium">会社名（任意）</label>
+          <label className="block text-sm font-medium mb-1">
+            会社名（任意）
+          </label>
           <input
-            className="mt-1 w-full rounded border px-3 py-2"
-            placeholder="例）株式会社〇〇"
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            autoComplete="organization"
+            type="text"
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+            className="w-full rounded-md border px-3 py-2"
+            placeholder="例）（株）今川焼"
           />
         </div>
 
-        {/* 会社規模 */}
+        {/* company size */}
         <div>
-          <label className="block text-sm font-medium">会社規模</label>
+          <label className="block text-sm font-medium mb-1">会社規模</label>
           <select
-            className="mt-1 w-full rounded border px-3 py-2"
             value={companySize}
-            onChange={(e) => setCompanySize(e.target.value)}
+            onChange={(e) =>
+              setCompanySize(e.target.value as (typeof companySizes)[number])
+            }
+            className="w-full rounded-md border px-3 py-2"
           >
-            <option value="">選択してください</option>
-            {COMPANY_SIZE_OPTIONS.map((op) => (
-              <option key={op} value={op}>
-                {op}
+            {companySizes.map((s) => (
+              <option key={s} value={s}>
+                {s}
               </option>
             ))}
           </select>
         </div>
 
-        {/* 業種（日本語のみ） */}
+        {/* industry */}
         <div>
-          <label className="block text-sm font-medium">業種</label>
+          <label className="block text-sm font-medium mb-1">業種</label>
           <select
-            className="mt-1 w-full rounded border px-3 py-2"
             value={industry}
-            onChange={(e) => setIndustry(e.target.value)}
+            onChange={(e) =>
+              setIndustry(e.target.value as (typeof industries)[number])
+            }
+            className="w-full rounded-md border px-3 py-2"
           >
-            <option value="">選択してください</option>
-            {INDUSTRY_OPTIONS.map((op) => (
-              <option key={op} value={op}>
-                {op}
+            {industries.map((s) => (
+              <option key={s} value={s}>
+                {s}
               </option>
             ))}
           </select>
         </div>
 
-        {/* 年齢（日本語のみ） */}
+        {/* age band */}
         <div>
-          <label className="block text-sm font-medium">年齢</label>
+          <label className="block text-sm font-medium mb-1">年齢</label>
           <select
-            className="mt-1 w-full rounded border px-3 py-2"
-            value={ageRange}
-            onChange={(e) => setAgeRange(e.target.value)}
+            value={ageBand}
+            onChange={(e) =>
+              setAgeBand(e.target.value as (typeof ageBands)[number])
+            }
+            className="w-full rounded-md border px-3 py-2"
           >
-            <option value="">選択してください</option>
-            {AGE_RANGE_OPTIONS.map((op) => (
-              <option key={op} value={op}>
-                {op}
+            {ageBands.map((s) => (
+              <option key={s} value={s}>
+                {s}
               </option>
             ))}
           </select>
         </div>
 
-        {/* 送信 */}
-        <div className="pt-2">
+        {/* actions */}
+        <div className="pt-4">
           <button
             type="submit"
-            disabled={disabled}
-            className="w-full rounded bg-black px-4 py-2 font-semibold text-white disabled:opacity-40"
+            disabled={!isReadyToSubmit || submitting}
+            className={`w-full rounded-md px-4 py-3 text-white ${
+              !isReadyToSubmit || submitting
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-black hover:opacity-90'
+            }`}
           >
-            送信
+            {submitting ? '送信中...' : '送信'}
           </button>
+          {!isUuidish(rid) && (
+            <p className="mt-2 text-xs text-rose-600">
+              ridが未入力／形式不正のため送信できません。
+            </p>
+          )}
+          {message && (
+            <p className="mt-3 text-sm text-emerald-700">{message}</p>
+          )}
+          {error && <p className="mt-3 text-sm text-rose-700">{error}</p>}
         </div>
       </form>
+
+      <hr className="my-8" />
+      <div className="text-xs text-gray-500 space-y-1">
+        <p>※ ridは診断結果ページのURLに含まれるIDです。</p>
+        <p>
+          例：
+          <code className="px-1 bg-gray-100 rounded">
+            https://samurai-check.vercel.app/result?rid=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+          </code>
+        </p>
+      </div>
     </main>
   );
 }

@@ -1,4 +1,4 @@
-// components/consult/ConsultStartForm.tsx
+// /components/consult/ConsultStartForm.tsx
 'use client';
 
 import { useMemo, useState } from 'react';
@@ -55,7 +55,11 @@ export default function ConsultStartForm() {
     const fd = new FormData(e.currentTarget);
     fd.set('name', name.trim());
     fd.set('email', email.trim());
-    if (resultId) fd.set('resultId', resultId); // rid を同梱（URLなしでもOK）
+    if (resultId) {
+      // ← 両方入れておく（API側が rid / resultId どっちで来てもOKにするため）
+      fd.set('resultId', resultId);
+      fd.set('rid', resultId);
+    }
     fd.set('assigneePref', consultant);
     if (style) fd.set('style', style);
 
@@ -111,8 +115,9 @@ export default function ConsultStartForm() {
       </div>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-8">
-        {/* hidden（保険） */}
+        {/* hidden（保険：両方入れる） */}
         <input type="hidden" name="resultId" value={resultId} />
+        <input type="hidden" name="rid" value={resultId} />
         <input type="hidden" name="assigneePref" value={consultant} />
         <input type="hidden" name="note" value="" />
 
@@ -308,9 +313,7 @@ export default function ConsultStartForm() {
           src="/images/logo.png"
           alt="IOT ロゴ"
           className="h-7 w-auto opacity-90"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = 'none';
-          }}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
         />
         <span>© 2025 一般社団法人 企業の未来づくり研究所</span>
       </footer>
