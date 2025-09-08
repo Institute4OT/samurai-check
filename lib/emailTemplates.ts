@@ -1,9 +1,7 @@
 // lib/emailTemplates.ts
 // ─ メール本文テンプレ & URLユーティリティ（互換APIを全部カバー）─
 
-const BRAND_JA = '一般社団法人 企業の未来づくり研究所';
-const BRAND_EN = 'Institute for Our Transformation';
-const BRAND_SHORT = 'IOT（企業の未来づくり研究所）';
+const BRAND = 'IOT（企業の未来づくり研究所）';
 
 // ===== App URL（末尾スラ無し）=====
 export const APP_URL = (
@@ -11,15 +9,10 @@ export const APP_URL = (
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 ).replace(/\/+$/, '');
 
-// 共有用URL（指定があればそれを使う）
-const SHARE_URL = (process.env.NEXT_PUBLIC_SHARE_URL || APP_URL).replace(/\/+$/, '/');
-// LINEオープンチャット（既存env or 既定）
-const OPENCHAT_URL = process.env.NEXT_PUBLIC_LINE_OC_URL || 'https://x.gd/9RRcN';
-
 // ===== レポートURL =====
 export const REPORT_URL = (id: string) =>
   `${APP_URL}/report?resultId=${encodeURIComponent(id)}`;
-export const reportUrl = REPORT_URL; // 互換
+export const reportUrl = REPORT_URL; // 互換エイリアス
 
 // ===== 相談予約URL（SPIR or 自社フォーム）=====
 const SPIR_ISHIJIMA = process.env.SPIR_ISHIJIMA_URL?.trim();
@@ -45,119 +38,105 @@ export const bookingUrlFor = (
   return qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base;
 };
 
+const SHARE_URL = APP_URL;
+
 // ===== 署名 =====
-const SIGNATURE_TEXT = `
-${BRAND_JA}
-(${BRAND_EN})
+const signatureText = `
+━━━━━━━━━━━━━━━━━━
+一般社団法人 企業の未来づくり研究所
+(Institute for Our Transformation)
 https://ourdx-mtg.com/
-お問合せ先 : info@ourdx-mtg.com
+お問合せ：info@ourdx-mtg.com
 〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F
 `.trim();
 
-const SIGNATURE_HTML = `
-<div style="font-size:12px;line-height:1.7;color:#666">
-  ${BRAND_JA}<br/>
-  <em>${BRAND_EN}</em><br/>
+const signatureHTML = `
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+<p style="font-size:12px;color:#666;line-height:1.6;">
+  一般社団法人 企業の未来づくり研究所<br/>
+  (Institute for Our Transformation)<br/>
   <a href="https://ourdx-mtg.com/" target="_blank" rel="noopener">https://ourdx-mtg.com/</a><br/>
-  お問合せ先：<a href="mailto:info@ourdx-mtg.com">info@ourdx-mtg.com</a><br/>
+  お問合せ：<a href="mailto:info@ourdx-mtg.com">info@ourdx-mtg.com</a><br/>
   〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F
-</div>
+</p>
 `.trim();
 
 // ===== 型 =====
 export type CompanySize =
-  | '1-10' | '11-50' | '51-100' | '101-300' | '301-500' | '501-1000' | '1001+'
-  | string; // 許容（日本語ラベル等）
-
-const is51Plus = (v?: CompanySize): boolean => {
-  if (!v) return false;
-  const s = String(v);
-  // 英語表記 / 日本語ラベルどちらも許容
-  if (/(^51-)|(^101-)|(^301-)|(^501-)|1001\+/.test(s)) return true;
-  if (/51～100|101～300|301～1000|1001名以上|51名以上/.test(s)) return true;
-  return false;
-};
+  | '1-10' | '11-50' | '51-100' | '101-300' | '301-500' | '501-1000' | '1001+';
 
 // ===== 申込者向け（会社規模で文面分岐）=====
 export function renderReportRequestMailToUser(args: {
   name: string;
   resultId?: string;
-  companySize: CompanySize; // 寛容化
+  companySize: CompanySize | string; // 寛容化
   consultant?: Consultant;
   email?: string;
 }) {
-  const large = is51Plus(args.companySize);
+  const isLarge = !['1-10', '11-50'].includes(String(args.companySize));
   const rUrl = args.resultId ? REPORT_URL(args.resultId) : undefined;
   const bUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
 
-  if (large) {
-    // 51名以上：特典相談＋OC
-    const subject = '【武将タイプ診断】詳細レポートURLのご案内／無料個別相談（特典）';
+  if (isLarge) {
+    const subject = '【武将タイプ診断アプリ特典】詳細レポートURLと無料個別相談のご案内';
     const text = `
 ${args.name} 様
 
-「AI時代の経営者 武将タイプ診断」をご利用いただきありがとうございます。
-${rUrl ? `下記URLから詳細レポートをご確認いただけます。\n\n▼レポート\n${rUrl}\n` : ''}
+AI時代の経営者「武将タイプ診断」をご利用いただきありがとうございます。
+${rUrl ? `以下のURLから詳細レポートをご確認いただけます。\n\n▼レポート\n${rUrl}\n` : ''}
 
-▼無料個別相談（特典／従業員51名以上の企業様）
-読み解き・次の一手・90日アクション案を一緒に整理します。
+▼特典：無料個別相談（読み解き／次の一手／90日アクション案）
 ${bUrl}
 
-▼最新情報・交流（LINEオープンチャット）
-${OPENCHAT_URL}
+※ 無料個別相談は、従業員51名以上の企業の経営者（もしくは相当役職）の方への限定特典です。
+このメールにご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。
 
-${SIGNATURE_TEXT}
+${signatureText}
     `.trim();
 
     const html = `
-<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
-  <p>${args.name} 様</p>
-  <p>「AI時代の経営者 武将タイプ診断」をご利用いただきありがとうございます。</p>
-  ${rUrl ? `<p>▼レポート<br/><a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
-  <p>▼無料個別相談（<b>特典／従業員51名以上の企業様</b>）<br/>
-     読み解き・次の一手・90日アクション案を一緒に整理します。<br/>
-     <a href="${bUrl}" target="_blank" rel="noopener">予約ページを開く</a>
-  </p>
-  <p>▼最新情報・交流（LINEオープンチャット）<br/>
-     <a href="${OPENCHAT_URL}" target="_blank" rel="noopener">${OPENCHAT_URL}</a></p>
-  <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
-  ${SIGNATURE_HTML}
-</div>
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
+      <p>${args.name} 様</p>
+      <p>AI時代の経営者「武将タイプ診断」をご利用いただきありがとうございます。</p>
+      ${rUrl ? `<p>▼レポート<br/><a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
+      <p>▼<strong>特典：無料個別相談</strong>（読み解き／次の一手／90日アクション案）<br/>
+        <a href="${bUrl}" target="_blank" rel="noopener">予約ページを開く</a>
+      </p>
+      <p style="font-size:12px;color:#444;">※ 無料個別相談は、従業員51名以上の企業の経営者（もしくは相当役職）の方への限定特典です。</p>
+      <p>このメールに直接ご返信いただいてもOKです（返信先：info@ourdx-mtg.com）。</p>
+      ${signatureHTML}
+    </div>
     `.trim();
 
     return { subject, text, html };
   }
 
-  // 50名以下：拡散＋OCのみ（申込導線ナシ）
-  const subject = '【武将タイプ診断】詳細レポートURLのご案内';
+  const subject = '【受付】詳細レポートのご案内｜応援＆共有のお願い';
   const text = `
 ${args.name} 様
 
-「AI時代の経営者 武将タイプ診断」をご利用いただきありがとうございます。
-${rUrl ? `下記URLから詳細レポートをご確認いただけます。\n\n▼レポート\n${rUrl}\n` : ''}
+AI時代の経営者「武将タイプ診断」をご利用いただきありがとうございます。
+${rUrl ? `以下のURLから詳細レポートをご確認いただけます。\n\n▼レポート\n${rUrl}\n` : ''}
+小さな団体の取り組みです。価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。
 
-もし価値を感じていただけたら、SNSなどでのご紹介・拡散にご協力ください。
 ▼紹介用リンク
 ${SHARE_URL}
 
-▼最新情報・交流（LINEオープンチャット）
-${OPENCHAT_URL}
+最新情報や交流はLINEオープンチャットでどうぞ： https://x.gd/9RRcN
 
-${SIGNATURE_TEXT}
+${signatureText}
   `.trim();
 
   const html = `
-<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
-  <p>${args.name} 様</p>
-  <p>「AI時代の経営者 武将タイプ診断」をご利用いただきありがとうございます。</p>
-  ${rUrl ? `<p>▼レポート<br/><a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
-  <p>もし価値を感じていただけたら、SNS等でのご紹介・拡散にご協力ください。</p>
-  <p>▼紹介用リンク<br/><a href="${SHARE_URL}" target="_blank" rel="noopener">${SHARE_URL}</a></p>
-  <p>▼最新情報・交流（LINEオープンチャット）<br/>
-     <a href="${OPENCHAT_URL}" target="_blank" rel="noopener">${OPENCHAT_URL}</a></p>
-  <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
-  ${SIGNATURE_HTML}
-</div>
+  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
+    <p>${args.name} 様</p>
+    <p>AI時代の経営者「武将タイプ診断」をご利用いただきありがとうございます。</p>
+    ${rUrl ? `<p>▼レポート<br/><a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
+    <p>価値を感じていただけたら、経営者仲間へ共有いただけると励みになります。</p>
+    <p>▼紹介用リンク<br/><a href="${SHARE_URL}" target="_blank" rel="noopener">${SHARE_URL}</a></p>
+    <p>最新情報や交流はLINEオープンチャットへ： <a href="https://x.gd/9RRcN" target="_blank" rel="noopener">https://x.gd/9RRcN</a></p>
+    ${signatureHTML}
+  </div>
   `.trim();
 
   return { subject, text, html };
@@ -168,8 +147,12 @@ export function renderReportRequestMailToOps(args: {
   email: string;
   name: string;
   companyName?: string;
-  companySize: CompanySize;
-  industry: string;
+  companySize: CompanySize | string;
+  industry:
+    | '製造' | 'IT・ソフトウェア' | '医療・福祉' | '金融' | '物流・運輸'
+    | '建設' | '小売・卸' | '飲食・宿泊' | '教育・研究' | '不動産'
+    | 'メディア・広告' | 'エネルギー' | '農林水産' | '公共・行政'
+    | 'サービス' | 'その他';
   resultId?: string;
 }) {
   const subject = '【samurai-check】詳細レポート申込 受付';
@@ -200,7 +183,7 @@ export function renderReportRequestMailToOps(args: {
   return { subject, text, html };
 }
 
-// ===== 相談申込：ユーザー向け 自動返信（特典）=====
+// ===== 相談申込：ユーザー向け 自動返信 =====
 export function renderConsultIntakeMailToUser(args: {
   name: string;
   consultant?: Consultant;
@@ -210,38 +193,76 @@ export function renderConsultIntakeMailToUser(args: {
   const bUrl = bookingUrlFor(args.consultant, args.resultId, args.email);
   const rUrl  = args.resultId ? REPORT_URL(args.resultId) : undefined;
 
-  const subject = '【武将タイプ診断アプリ特典】無料個別相談のご案内（今すぐ予約OK）';
+  const subject = '【武将タイプ診断アプリ特典】無料個別相談のご案内（受付完了）';
   const text = `
 ${args.name} 様
 
-「AI時代の経営者 武将タイプ診断」の詳細レポートお申込み、ありがとうございます。
-本メールは <特典> 無料個別相談（従業員51名以上の企業の経営者・役員向け）のご案内です。
+AI時代の経営者「武将タイプ診断」への無料個別相談のお申込み、ありがとうございます。
 下記の予約リンクからご都合の良い日時をご選択ください。
 
 予約リンク：
 ${bUrl}
 ${rUrl ? `\n参考：診断レポート\n${rUrl}\n` : ''}
 
-${SIGNATURE_TEXT}
-  `.trim();
+※ 無料個別相談は、詳細レポートのお申込みをいただいた従業員51名以上の企業の経営者（もしくは相当役職）の方への限定特典です。
+
+${signatureText}
+`.trim();
 
   const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
     <p>${args.name} 様</p>
-    <p>「AI時代の経営者 武将タイプ診断」の<b>詳細レポートお申込み</b>ありがとうございます。<br/>
-       本メールは<b>特典：無料個別相談</b>（従業員51名以上の企業の経営者・役員向け）のご案内です。</p>
+    <p>AI時代の経営者「武将タイプ診断」への無料個別相談のお申込み、ありがとうございます。<br/>
+       下記の予約リンクからご都合の良い日時をご選択ください。</p>
     <p><a href="${bUrl}" target="_blank" rel="noopener">予約ページを開く</a></p>
     ${rUrl ? `<p>参考：レポート <a href="${rUrl}" target="_blank" rel="noopener">${rUrl}</a></p>` : ''}
-    <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
-    ${SIGNATURE_HTML}
+    <p style="font-size:12px;color:#444;">※ 無料個別相談は、詳細レポートのお申込みをいただいた従業員51名以上の企業の経営者（もしくは相当役職）の方への限定特典です。</p>
+    ${signatureHTML}
   </div>
   `.trim();
 
   return { subject, text, html };
 }
 
+// ===== 相談申込：運用向け通知（互換）=====
+export function renderConsultIntakeMailToOps(args: {
+  name?: string;
+  email?: string;
+  tel?: string;
+  companyName?: string;
+  companySize?: CompanySize | string;
+  industry?: string;
+  resultId?: string;
+  message?: string;
+  consultant?: Consultant; // 受け取れても未使用でOK
+}) {
+  const subject = '【通知】無料相談の新規申込みがありました';
+  const lines = [
+    `氏名: ${args.name ?? ''}`,
+    `メール: ${args.email ?? ''}`,
+    `電話: ${args.tel ?? ''}`,
+    `会社名: ${args.companyName ?? ''}`,
+    `会社規模: ${args.companySize ?? ''}`,
+    `業種: ${args.industry ?? ''}`,
+    `診断ID: ${args.resultId ?? ''}`,
+    args.consultant ? `担当候補: ${args.consultant}` : '',
+    args.message ? `メッセージ: ${args.message}` : '',
+  ].filter(Boolean);
+
+  const text = lines.join('\n');
+  const html = `<div>${lines
+    .map((l) => l.replace(/&/g, '&amp;').replace(/</g, '&lt;'))
+    .join('<br/>')}</div>`;
+
+  return { subject, text, html };
+}
+
 /* ------------------------------------------------------------------
    互換API：buildConsultEmail
+   - 旧A: buildConsultEmail({ name, consultant?, resultId?, email? })
+         → 相談自動返信（ユーザー向け）を返す
+   - 旧B: buildConsultEmail({ toName, reportUrl, bookingUrl, offerNote? })
+         → 「レポート案内 + 予約URL」を返す
 -------------------------------------------------------------------*/
 type BuildV1 = { name: string; consultant?: Consultant; resultId?: string; email?: string; };
 type BuildV2 = { toName: string; reportUrl: string; bookingUrl: string; offerNote?: string; };
@@ -249,7 +270,7 @@ type BuildV2 = { toName: string; reportUrl: string; bookingUrl: string; offerNot
 export function buildConsultEmail(args: BuildV1 | BuildV2) {
   if ('toName' in args) {
     // 旧Bパターン
-    const subject = '【武将タイプ診断】詳細レポートのご案内（特典のご利用も可）';
+    const subject = '【受付】詳細レポートのご案内';
     const text = `
 ${args.toName} 様
 
@@ -257,11 +278,11 @@ ${args.toName} 様
 ▼レポート
 ${args.reportUrl}
 
-▼無料個別相談（従業員51名以上の企業様向け特典）
+▼無料個別相談（任意）
 ${args.bookingUrl}
 ${args.offerNote ? `\n※${args.offerNote}` : ''}
 
-${SIGNATURE_TEXT}
+${signatureText}
 `.trim();
 
     const html = `
@@ -269,10 +290,9 @@ ${SIGNATURE_TEXT}
       <p>${args.toName} 様</p>
       <p>詳細レポートをご確認いただけます。</p>
       <p>▼レポート<br/><a href="${args.reportUrl}" target="_blank" rel="noopener">${args.reportUrl}</a></p>
-      <p>▼無料個別相談（<b>従業員51名以上の企業様向け特典</b>）<br/><a href="${args.bookingUrl}" target="_blank" rel="noopener">${args.bookingUrl}</a></p>
+      <p>▼無料個別相談（任意）<br/><a href="${args.bookingUrl}" target="_blank" rel="noopener">${args.bookingUrl}</a></p>
       ${args.offerNote ? `<p style="color:#444;">※${args.offerNote}</p>` : ''}
-      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
-      ${SIGNATURE_HTML}
+      ${signatureHTML}
     </div>
     `.trim();
 
