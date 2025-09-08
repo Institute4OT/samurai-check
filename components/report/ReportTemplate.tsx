@@ -15,7 +15,7 @@ import { kabutoSrcByType, SamuraiLabel } from '@/lib/report/kabutoMap';
 import ReportCTA from './ReportCTA';
 import { genScoreFallbackBullets } from '@/lib/report/personalization';
 
-// ★ 追加：ridを各ストレージへ同期する小コンポーネント
+// ★ rid を各ストレージへ同期
 import RidSync from '@/components/rid/RidSync';
 
 // 日本語⇄英字キー
@@ -45,7 +45,7 @@ export type ReportInput = {
   companySize?: string;
 };
 
-/* ========= ラベルと並び順（レーダーもこれで固定） ========= */
+/* ========= 並び順（レーダーもこれで固定） ========= */
 const ORDER: { key: CategoryKey; label: string }[] = [
   { key: 'delegation',     label: '権限委譲・構造健全度' },
   { key: 'orgDrag',        label: '組織進化阻害' },
@@ -63,25 +63,20 @@ const clamp = (v: unknown) => {
 };
 
 function normalizeCategories(input: ReportInput['categories']): CategoryScore[] {
-  // 1) すでに配列なら、安全化して並び替え
   if (Array.isArray(input)) {
-    const map = new Map< CategoryKey, number >();
+    const map = new Map<CategoryKey, number>();
     input.forEach((c) => {
-      // key不明でも label から推測
       const k = (c?.key as CategoryKey) ??
         (ORDER.find(o => o.label === c?.label)?.key as CategoryKey);
       if (k) map.set(k, clamp(c?.score));
     });
     return ORDER.map(o => ({ key: o.key, label: o.label, score: clamp(map.get(o.key)) }));
   }
-
-  // 2) 連想形式（{commGap: 2, ...}）
   const rec = input || {};
   return ORDER.map(o => ({ key: o.key, label: o.label, score: clamp((rec as any)[o.key]) }));
 }
 
 function findKeyByJa(ja: string): SamuraiKey | null {
-  // 「型」有無や空白のゆらぎを吸収
   const norm = (s: string) => s.replace(/\s+/g, '').replace(/型$/, '');
   const n = norm(ja);
   for (const [k, v] of Object.entries(KEY_TO_JA)) {
@@ -90,7 +85,7 @@ function findKeyByJa(ja: string): SamuraiKey | null {
   return null;
 }
 
-/* ========= タイプ別のキャッチ（タイトル直下） ========= */
+/* ========= タイプ別のキャッチ ========= */
 const COMMON_BY_TYPE: Record<SamuraiJa, { headline: string }> = {
   今川義元型: { headline: '旧体制に安住しがちな安定志向タイプ' },
   織田信長型: { headline: '革新を突き進むトップダウン型' },
@@ -103,7 +98,7 @@ const COMMON_BY_TYPE: Record<SamuraiJa, { headline: string }> = {
 
 /* ========= 本文 ========= */
 function ReportBody({ data }: { data: ReportInput }) {
-  /** 1) タイプ名を堅牢に解決（信長固定問題の根治） */
+  // 1) タイプ名を堅牢に解決
   const { typeKey, typeJa } = useMemo(() => {
     const raw = (data.samuraiType ?? '').toString();
     let key: SamuraiKey | null = null;
@@ -118,7 +113,6 @@ function ReportBody({ data }: { data: ReportInput }) {
         key = guessed;
         ja = KEY_TO_JA[guessed] as SamuraiJa;
       } else {
-        // どうしても判定できない場合は、表示は raw を使い、本文辞書・兜は信長でフォールバック
         ja = (raw.endsWith('型') ? raw : '織田信長型') as SamuraiJa;
         key = (Object.keys(KEY_TO_JA).includes('oda') ? 'oda' : Object.keys(KEY_TO_JA)[0]) as SamuraiKey;
       }
@@ -126,26 +120,26 @@ function ReportBody({ data }: { data: ReportInput }) {
     return { typeKey: key, typeJa: ja };
   }, [data.samuraiType]);
 
-  /** 2) カテゴリの正規化（配列/連想 どちらでもOK） */
+  // 2) カテゴリの正規化
   const categories = useMemo(() => normalizeCategories(data.categories), [data.categories]);
 
-  /** 3) レーダー用データ（空っぽ防止の最終防波堤つき） */
+  // 3) レーダー用データ
   const chartData = useMemo(
     () => (categories?.length ? categories : ORDER.map(o => ({ key: o.key, label: o.label, score: 0 })))
       .map(c => ({ subject: c.label, score: clamp(c.score) })),
     [categories]
   );
 
-  /** 4) コメント（personal > フォールバック） */
+  // 4) コメント（personal > フォールバック）
   const fallback = useMemo(
     () => genScoreFallbackBullets({ categories, flags: data.flags }),
     [categories, data.flags]
   );
-  const strengths   = data.personalComments?.talents?.length     ? data.personalComments!.talents     : fallback.strengths;
-  const improvements= data.personalComments?.challenges?.length  ? data.personalComments!.challenges  : fallback.improvements;
+  const strengths    = data.personalComments?.talents?.length    ? data.personalComments!.talents    : fallback.strengths;
+  const improvements = data.personalComments?.challenges?.length ? data.personalComments!.challenges : fallback.improvements;
   const personal = { strengths, improvements, notes: fallback.notes };
 
-  /** 5) タイプ別リソース */
+  // 5) タイプ別リソース
   const typeJaForDict = typeJa as unknown as SamuraiLabel;
   const kabutoSrc = kabutoSrcByType[typeJaForDict] ?? '/images/kabuto/oda.svg';
   const detail = TYPE_CONTENTS[typeJaForDict];
@@ -153,7 +147,7 @@ function ReportBody({ data }: { data: ReportInput }) {
 
   return (
     <div id="print-root" className="printable-root">
-      {/* ★ 追加：結果画面表示時に rid を各ストレージへ同期 */}
+      {/* ★ 結果画面表示時に rid を各ストレージへ同期 */}
       <RidSync rid={data.resultId} />
 
       {/* ヘッダ */}
@@ -268,7 +262,7 @@ function ReportBody({ data }: { data: ReportInput }) {
         </Card>
         <Card className="rounded-2xl border shadow-sm break-inside-avoid">
           <CardContent className="p-6 space-y-1">
-            <h3 className="font-semibold flex items-center gap-2">
+            <h3 className="font-semibold flex items中心 gap-2">
               <Target className="w-5 h-5" /> 新たな挑戦のフィールド
             </h3>
             <p className="text-xs text-muted-foreground">※ 次の90日で磨くと効果が高いテーマ</p>

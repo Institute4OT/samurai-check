@@ -63,7 +63,8 @@ export async function POST(req: Request) {
     }
 
     // --- 任意（hidden 推奨含む） ---
-    const resultId     = String(fd.get('resultId')     ?? '').trim();
+    // ゆれ吸収：rid / resultId / id どれでも可
+    const resultId = (String(fd.get('rid') ?? '') || String(fd.get('resultId') ?? '') || String(fd.get('id') ?? '')).trim();
     const style        = String(fd.get('style')        ?? '').trim() || null;
     const assigneePref = (String(fd.get('assigneePref') ?? 'either').trim() || 'either') as Consultant;
     const themes       = fd.getAll('themes').map(v => String(v).trim()).filter(Boolean);
@@ -173,7 +174,7 @@ export async function POST(req: Request) {
       text: userMail.text,
     });
 
-    // 2) 運用通知（補足を末尾に添付）
+    // 2) 運用通知（補足を末尾に添付）— RID を必ず明記
     const opsMail = renderConsultIntakeMailToOps({
       email,
       name,
@@ -188,6 +189,7 @@ export async function POST(req: Request) {
       html: `${opsMail.html}
 <hr/>
 <div style="font-size:12px;color:#666;line-height:1.7">
+  <b>resultId:</b> ${resultId || '-'}<br/>
   <b>style:</b> ${style || '-'}<br/>
   <b>assigneePref:</b> ${assigneePref}<br/>
   <b>assigned:</b> ${assigned}<br/>
@@ -197,9 +199,9 @@ export async function POST(req: Request) {
       text: opsMail.text,
     });
 
-    // 3) 画面側へ返却（即リダイレクト用 URL も同梱）
+    // 3) 画面側へ返却（即リダイレクト用 URL も同梱）— RID も返す
     const bookingUrl = bookingUrlFor(consultantForMail, resultId || undefined, email);
-    return NextResponse.json({ ok: true, assigned, bookingUrl });
+    return NextResponse.json({ ok: true, assigned, bookingUrl, rid: resultId || null });
   } catch (e: any) {
     console.error('[api/consult/booking] failed:', e);
     return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });

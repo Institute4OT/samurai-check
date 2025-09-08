@@ -1,4 +1,4 @@
-// app/report/page.tsx
+// app/report/[rid]/page.tsx
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import ReportTemplate, { type ReportInput } from "@/components/report/ReportTemplate";
@@ -6,7 +6,7 @@ import { readSnapshot } from "@/lib/scoreSnapshot";
 
 export const dynamic = "force-dynamic";
 
-type PageProps = { searchParams?: { rid?: string; resultId?: string; id?: string } };
+type PageProps = { params: { rid: string } };
 
 function envOrThrow(...names: string[]) {
   for (const n of names) {
@@ -18,17 +18,14 @@ function envOrThrow(...names: string[]) {
 
 const supabase = createClient(
   envOrThrow("NEXT_PUBLIC_SUPABASE_URL"),
-  // 読み取り専用：ANON優先／なければSERVICE_ROLEでも可（サーバ実行のため）
   envOrThrow("NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
   { auth: { persistSession: false } }
 );
 
-export default async function Page({ searchParams }: PageProps) {
-  const q = searchParams ?? {};
-  const rid = (q.rid || q.resultId || q.id || "").trim();
+export default async function Page({ params }: PageProps) {
+  const rid = decodeURIComponent(params.rid || "").trim();
   if (!rid) notFound();
 
-  // 1) 結果行を取得（※計算はしない）
   const { data: row, error } = await supabase
     .from("samurairesults")
     .select("*")
@@ -37,14 +34,12 @@ export default async function Page({ searchParams }: PageProps) {
 
   if (error || !row) notFound();
 
-  // 2) 保存済みスナップショットから読む（なければ旧カラム系で補完）
   const snap = readSnapshot(row);
   const samuraiType =
     snap.samuraiTypeJa ??
     snap.samuraiTypeKey ??
     (typeof row.samurai_type === "string" ? row.samurai_type : "");
 
-  // 3) ReportTemplate への入力データ
   const data: ReportInput = {
     resultId: rid,
     samuraiType,

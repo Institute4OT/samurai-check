@@ -1,22 +1,32 @@
 // lib/emailTemplates.ts
-// ─ メール本文テンプレ & URLユーティリティ（互換APIを全部カバー）─
+// ─ メール本文テンプレ & URLユーティリティ（名称ゆれ完全吸収版）─
 
 const BRAND = 'IOT（企業の未来づくり研究所）';
 
 // ===== App URL（末尾スラ無し）=====
-export const APP_URL = (
-  process.env.NEXT_PUBLIC_APP_URL ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-).replace(/\/+$/, '');
+function resolveAppUrl(): string {
+  const cand =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+    'http://localhost:3000';
+  return String(cand).replace(/\/+$/, '');
+}
+export const APP_URL = resolveAppUrl();
 
 // ===== レポートURL =====
+// 既定：?rid= を使用（互換のため resultId もサブで受ける実装に統一）
 export const REPORT_URL = (id: string) =>
-  `${APP_URL}/report?resultId=${encodeURIComponent(id)}`;
-export const reportUrl = REPORT_URL; // エイリアス（互換のため）
+  `${APP_URL}/report?rid=${encodeURIComponent(id)}`;
+export const reportUrl = REPORT_URL; // 互換エイリアス
 
 // ===== 相談予約URL（SPIR or 自社フォーム）=====
-const SPIR_ISHIJIMA = process.env.SPIR_ISHIJIMA_URL?.trim();
-const SPIR_MORIGAMI  = process.env.SPIR_MORIGAMI_URL?.trim();
+// 環境変数の別名も吸収（NEXT_PUBLIC_* / 無印 のどちらでも可）
+const SPIR_ISHIJIMA =
+  (process.env.NEXT_PUBLIC_SPIR_ISHIJIMA_URL || process.env.SPIR_ISHIJIMA_URL || '').trim();
+const SPIR_MORIGAMI =
+  (process.env.NEXT_PUBLIC_SPIR_MORIGAMI_URL || process.env.SPIR_MORIGAMI_URL || '').trim();
 
 export type Consultant = 'ishijima' | 'morigami' | undefined;
 
@@ -31,8 +41,12 @@ export const bookingUrlFor = (
     `${APP_URL}/consult/start`;
 
   const params = new URLSearchParams();
-  if (resultId) params.set('resultId', resultId);
-  if (email)    params.set('email', email);
+  // ゆれ吸収：rid を主、resultId を副として両方付与
+  if (resultId) {
+    params.set('rid', resultId);
+    params.set('resultId', resultId);
+  }
+  if (email) params.set('email', email);
   const qs = params.toString();
 
   return qs ? `${base}${base.includes('?') ? '&' : '?'}${qs}` : base;
