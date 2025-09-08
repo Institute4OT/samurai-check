@@ -6,7 +6,7 @@ import { readSnapshot } from "@/lib/scoreSnapshot";
 
 export const dynamic = "force-dynamic";
 
-type PageProps = { searchParams?: { rid?: string; resultId?: string; id?: string } };
+type PageProps = { searchParams?: Record<string, string | string[] | undefined> };
 
 function envOrThrow(...names: string[]) {
   for (const n of names) {
@@ -23,38 +23,51 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
+// rid / resultId / id のいずれかから拾う
+function pickRid(sp?: PageProps["searchParams"]): string {
+  const val =
+    (typeof sp?.rid === "string" && sp?.rid) ||
+    (typeof sp?.resultId === "string" && sp?.resultId) ||
+    (typeof sp?.id === "string" && sp?.id) ||
+    "";
+  return val.trim();
+}
+
 export default async function Page({ searchParams }: PageProps) {
-  const q = searchParams ?? {};
-  const rid = (q.rid || q.resultId || q.id || "").trim();
+  const rid = pickRid(searchParams);
   if (!rid) notFound();
 
-  // 1) 結果行を取得（※計算はしない）
+  // 1) 結果行だけ取得（計算はしない）
   const { data: row, error } = await supabase
     .from("samurairesults")
     .select("*")
     .eq("id", rid)
-    .single();
+    .maybeSingle();
 
   if (error || !row) notFound();
 
-  // 2) 保存済みスナップショットから読む（なければ旧カラム系で補完）
+  // 2) 保存済みスナップショットを利用（なければ旧カラムから復元）
   const snap = readSnapshot(row);
+
   const samuraiType =
     snap.samuraiTypeJa ??
     snap.samuraiTypeKey ??
-    (typeof row.samurai_type === "string" ? row.samurai_type : "");
+    (typeof (row as any).samurai_type === "string" ? (row as any).samurai_type : "");
 
-  // 3) ReportTemplate への入力データ
+  // 3) テンプレに渡すデータ
   const data: ReportInput = {
     resultId: rid,
     samuraiType,
     categories: snap.categories,
     flags: {
-      manyZeroOnQ5: !!row.flag_manyZeroOnQ5,
-      noRightHand: !!row.flag_noRightHand,
+      manyZeroOnQ5: !!(row as any).flag_manyZeroOnQ5,
+      noRightHand: !!(row as any).flag_noRightHand,
     },
     personalComments: undefined,
-    companySize: typeof row.company_size === "number" ? String(row.company_size) : (row.company_size ?? ""),
+    companySize:
+      typeof (row as any).company_size === "number"
+        ? String((row as any).company_size)
+        : ((row as any).company_size ?? ""),
   };
 
   return <ReportTemplate data={data} />;

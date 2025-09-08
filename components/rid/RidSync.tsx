@@ -1,22 +1,26 @@
-// components/rid/RidSync.tsx
+// /components/rid/RidSync.tsx
 'use client';
 
 import { useEffect } from 'react';
+import { ensureRid, isIdish, resolveRidFromEnv, syncRidEverywhere } from '@/lib/utils/resolveRid';
 
-export default function RidSync({ rid }: { rid?: string | null }) {
+/** 
+ * rid を URL/Storage/Cookie に同期。
+ * props.rid が無い場合でも、環境から解決 → それでも無ければ生成して同期。
+ */
+export default function RidSync({ rid, alsoUrl = true }: { rid?: string | null; alsoUrl?: boolean }) {
   useEffect(() => {
-    const v = String(rid ?? '').trim();
-    if (!v) return;
-    try {
-      localStorage.setItem('samurai:rid', v);
-    } catch {}
-    try {
-      sessionStorage.setItem('samurai:rid', v);
-    } catch {}
-    try {
-      // 30分だけ有効なクッキー
-      document.cookie = `samurai_rid=${encodeURIComponent(v)}; Path=/; Max-Age=1800; SameSite=Lax`;
-    } catch {}
-  }, [rid]);
+    if (rid && isIdish(rid)) {
+      syncRidEverywhere(rid, { alsoUrl });
+      return;
+    }
+    // 環境から拾う or 生成
+    const found = resolveRidFromEnv();
+    if (found && isIdish(found)) {
+      syncRidEverywhere(found, { alsoUrl });
+    } else {
+      ensureRid(null); // 生成して同期（URLにも反映）
+    }
+  }, [rid, alsoUrl]);
   return null;
 }

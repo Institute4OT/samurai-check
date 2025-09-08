@@ -288,7 +288,7 @@ function ReportBody({ data }: { data: ReportInput }) {
       <ReportCTA
         resultId={data.resultId}
         companySize={data.companySize}
-        downloadUrl={`/report/${encodeURIComponent(data.resultId)}`}
+        downloadUrl={`/report?rid=${encodeURIComponent(data.resultId)}`}
       />
 
       {/* オープンチャット */}
