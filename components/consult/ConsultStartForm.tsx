@@ -1,7 +1,7 @@
-// /components/consult/ConsultStartForm.tsx
+// components/consult/ConsultStartForm.tsx
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -10,11 +10,30 @@ import ConsultantPicker from '@/components/consult/ConsultantPicker';
 import {
   TOPICS, GOAL_CHOICES, BOTTLENECK_CHOICES, PRIORITY_CHOICES,
   STYLE_OPTIONS, type TopicKey, type StyleKey, type ConsultantKey,
-} from '../../lib/consult/constants';
-import { useResolvedRidEmail } from '../../lib/hooks/useResolvedRidEmail';
+} from '@/lib/consult/constants';
+import { useResolvedRidEmail } from '@/lib/hooks/useResolvedRidEmail';
+
+/* ===== rid helpers ===== */
+function extractRidFromAny(v: string): string {
+  const s = (v || '').trim();
+  if (!s) return '';
+  // URLなら ?rid または resultId を抽出
+  try {
+    const u = new URL(s);
+    const cand = u.searchParams.get('rid') || u.searchParams.get('resultId') || u.searchParams.get('id');
+    if (cand) return cand.trim();
+  } catch {/* not a URL */}
+  return s;
+}
 
 export default function ConsultStartForm() {
-  const { rid: resultId, ridLocked, email, setEmail } = useResolvedRidEmail();
+  const { rid: ridFromHook, ridLocked, email, setEmail } = useResolvedRidEmail();
+
+  // rid（フック値を初期値に。未検出時のみ手動入力させる）
+  const [rid, setRid] = useState<string>(ridFromHook || '');
+  useEffect(() => {
+    if (ridFromHook && !rid) setRid(ridFromHook);
+  }, [ridFromHook]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 必須
   const [name, setName] = useState('');
@@ -39,8 +58,9 @@ export default function ConsultStartForm() {
     const emailOk = /\S+@\S+\.\S+/.test(email.trim());
     const nameOk = name.trim().length > 0;
     const topicsOk = topics.length > 0 || topicOther.trim().length > 0;
-    return emailOk && nameOk && topicsOk;
-  }, [email, name, topics, topicOther]);
+    const ridOk = rid.trim().length > 0; // ← rid必須（形式はサーバで再検証）
+    return emailOk && nameOk && topicsOk && ridOk;
+  }, [email, name, topics, topicOther, rid]);
 
   const toggleArr = (arr: string[], v: string) =>
     arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
@@ -48,17 +68,26 @@ export default function ConsultStartForm() {
   const toggleTopic = (k: TopicKey) =>
     setTopics((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
 
+  function persistRid(v: string) {
+    try {
+      localStorage.setItem('samurai:rid', v);
+      sessionStorage.setItem('samurai:rid', v);
+      document.cookie = `samurai_rid=${encodeURIComponent(v)}; Path=/; Max-Age=1800; SameSite=Lax`;
+    } catch {}
+  }
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!canSubmit) return;
 
+    const theRid = rid.trim();
+    persistRid(theRid);
+
     const fd = new FormData(e.currentTarget);
     fd.set('name', name.trim());
     fd.set('email', email.trim());
-    if (resultId) {
-      fd.set('rid', resultId);      // 正式名
-      fd.set('resultId', resultId); // 互換
-    }
+    fd.set('rid', theRid);       // 正式名
+    fd.set('resultId', theRid);  // 互換
     fd.set('assigneePref', consultant);
     if (style) fd.set('style', style);
 
@@ -108,15 +137,29 @@ export default function ConsultStartForm() {
         入力は1分ほどで完了します。送信後、詳細レポート（PDF）のダウンロードURLをメールでもお送りします。
       </p>
 
-      {/* 結果ID（自動復元） */}
-      <div className="mt-3 rounded-lg border px-4 py-2 text-xs text-muted-foreground">
-        結果ID（rid）：<code>{resultId || '（自動付与）'}</code>
+      {/* 結果ID（自動復元 or 手動入力フォールバック） */}
+      <div className="mt-3 rounded-lg border px-4 py-2 text-xs text-muted-foreground space-y-2">
+        {rid ? (
+          <div>
+            結果ID（rid）：<code>{rid}</code>
+            {!ridLocked && <span className="ml-2">(自動検出／編集可)</span>}
+          </div>
+        ) : (
+          <div>
+            <Label htmlFor="rid-input" className="text-xs">結果ID（rid）が未検出です。結果ページのURLまたはIDを貼り付けてください。</Label>
+            <Input
+              id="rid-input"
+              placeholder="例）https://.../result?rid=xxxxxxxx または ID そのもの"
+              onChange={(e) => setRid(extractRidFromAny(e.target.value))}
+            />
+          </div>
+        )}
       </div>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-8">
         {/* hidden（保険：両方入れる） */}
-        <input type="hidden" name="rid" value={resultId} />
-        <input type="hidden" name="resultId" value={resultId} />
+        <input type="hidden" name="rid" value={rid} />
+        <input type="hidden" name="resultId" value={rid} />
         <input type="hidden" name="assigneePref" value={consultant} />
         <input type="hidden" name="note" value="" />
 
@@ -300,7 +343,7 @@ export default function ConsultStartForm() {
           </Button>
           {!canSubmit && (
             <p className="text-xs text-muted-foreground">
-              お名前・メール、そして「ご相談トピック」をご入力ください。
+              お名前・メール、「ご相談トピック」、そして結果ID（rid）をご入力ください。
             </p>
           )}
         </div>
@@ -312,7 +355,9 @@ export default function ConsultStartForm() {
           src="/images/logo.png"
           alt="IOT ロゴ"
           className="h-7 w-auto opacity-90"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
         />
         <span>© 2025 一般社団法人 企業の未来づくり研究所</span>
       </footer>

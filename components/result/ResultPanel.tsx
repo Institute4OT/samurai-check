@@ -4,10 +4,15 @@
 import React, { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ShareModal from '@/components/common/ShareModal';
-import { Copy, Check, Share2 } from 'lucide-react';
+import { Share2 } from 'lucide-react';
 import FinalizeOnMount from '@/components/result/FinalizeOnMount';
 import { normalizeToCatArray, resolveSamuraiType, getEmojiLabel } from '@/lib/result/normalize';
 import { samuraiDescriptions } from '@/lib/samuraiJudge';
+
+// ★ 追加：結果ID表示バッジ（コピー付き）
+import IdBadge from '@/components/result/IdBadge';
+// ★ 追加：結果IDを WebStorage / Cookie に同期（フォームで自動復元させる）
+import RidSync from '@/components/rid/RidSync';
 
 type Props = {
   rid: string;
@@ -31,21 +36,13 @@ export default function ResultPanel({
   const typeResolved = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
   const displayName = typeResolved.display || samuraiType || '武将';
 
-  const [copied, setCopied] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(rid);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* noop */
-    }
-  };
 
   return (
     <div className="text-center max-w-4xl mx-auto p-8">
+      {/* ★ 表示時に rid を保存（フォームへの自動連携の保険） */}
+      <RidSync rid={rid} />
+
       {/* DBスナップショット確定（UI非表示） */}
       {rid && categoriesFixed.length > 0 && (
         <FinalizeOnMount
@@ -67,19 +64,10 @@ export default function ResultPanel({
             {samuraiDescriptions[samuraiType as keyof typeof samuraiDescriptions] ?? ''}
           </p>
 
-          {rid && (
-            <div className="flex items-center justify-center mt-4 space-x-2">
-              <p className="text-sm text-gray-500">診断ID: {rid}</p>
-              <button
-                onClick={handleCopy}
-                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                title="診断IDをコピー"
-                aria-label="診断IDをコピー"
-              >
-                {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-              </button>
-            </div>
-          )}
+          {/* ★ 復活：カード内の結果ID表示（コピー付き） */}
+          <div className="flex items-center justify-center mt-4">
+            <IdBadge rid={rid} />
+          </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
             <Button variant="secondary" onClick={() => setShareOpen(true)}>
@@ -163,8 +151,9 @@ export default function ResultPanel({
         >
           もう一度診断する
         </button>
+        {/* ★ 遷移クエリを resultId → rid に統一 */}
         <button
-          onClick={() => (window.location.href = `/form${rid ? `?resultId=${encodeURIComponent(rid)}` : ''}`)}
+          onClick={() => (window.location.href = `/form${rid ? `?rid=${encodeURIComponent(rid)}` : ''}`)}
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg hover:shadow-xl"
         >
           あなた専用の詳細レポートを受け取る（無料）

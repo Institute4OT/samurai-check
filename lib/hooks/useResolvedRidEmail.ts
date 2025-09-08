@@ -1,94 +1,85 @@
-// /lib/hooks/useResolvedRidEmail.ts
+// lib/hooks/useResolvedRidEmail.ts
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-/** UUIDらしさ簡易判定（ハイフン有無OK） */
-function isUuidish(v?: string | null): v is string {
-  if (!v) return false;
-  const s = v.trim();
-  return /^[0-9a-fA-F-]{30,}$/.test(s);
-}
+type UseResolvedRidEmail = {
+  rid: string;
+  ridLocked: boolean;           // URLから取得したら true（ユーザー編集させない等の判定に）
+  email: string;
+  setEmail: (v: string) => void;
+};
 
-/** 任意URL文字列から rid/email を抜く */
-function pickFromUrl(urlLike?: string | null) {
+function readRidFromUrl(): string | null {
   try {
-    if (!urlLike) return { rid: null as string | null, email: null as string | null };
-    const u = new URL(urlLike);
-    const rid = u.searchParams.get('rid') || u.searchParams.get('id');
-    const email = u.searchParams.get('email');
-    return {
-      rid: isUuidish(rid) ? rid! : null,
-      email: email && /\S+@\S+\.\S+/.test(email) ? email : null,
-    };
-  } catch {
-    return { rid: null as string | null, email: null as string | null };
-  }
+    const u = new URL(window.location.href);
+    return (
+      u.searchParams.get('rid') ||
+      u.searchParams.get('resultId') || // 旧表記の保険
+      u.searchParams.get('id')
+    );
+  } catch { return null; }
 }
 
-/** localStorage の候補キーを総当り */
-function readRidFromStorage(): string | null {
-  const keys = ['samurai:rid', 'samurai_last_rid', 'reportRid', 'resultId', 'rid'];
+function readRidFromStorages(): string | null {
+  const keys = ['samurai:rid','samurai_last_rid','reportRid','resultId','rid'];
   for (const k of keys) {
-    try {
-      const v = localStorage.getItem(k);
-      if (isUuidish(v)) return v!;
-    } catch {}
-  }
-  return null;
-}
-function readEmailFromStorage(): string | null {
-  const keys = ['samurai:email', 'reportEmail', 'userEmail', 'contactEmail'];
-  for (const k of keys) {
-    try {
-      const v = localStorage.getItem(k);
-      if (v && /\S+@\S+\.\S+/.test(v)) return v;
-    } catch {}
+    try { const v = localStorage.getItem(k);    if (v && v.trim()) return v.trim(); } catch {}
+    try { const v = sessionStorage.getItem(k);  if (v && v.trim()) return v.trim(); } catch {}
   }
   return null;
 }
 
-export function useResolvedRidEmail() {
-  // 1) 初期スキャン（URL > LS > referrer）
-  const urlPick = typeof window !== 'undefined' ? pickFromUrl(window.location.href) : { rid: null, email: null };
-  const [rid, setRid] = useState<string>(urlPick.rid || '');
-  const [email, setEmail] = useState<string>(urlPick.email || '');
+function readRidFromCookie(): string | null {
+  try {
+    const m = document.cookie.match(/(?:^|;\s*)samurai_rid=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch { return null; }
+}
 
-  // URLに rid があればロック扱い（表示はするが、基本はそのまま使う想定）
-  const ridLocked = !!urlPick.rid;
+function readRidFromReferrer(): string | null {
+  try {
+    const u = new URL(document.referrer);
+    return (
+      u.searchParams.get('rid') ||
+      u.searchParams.get('resultId') ||
+      u.searchParams.get('id')
+    );
+  } catch { return null; }
+}
 
-  useEffect(() => {
-    // ridが未取得ならLS
-    if (!rid) {
-      const fromLS = readRidFromStorage();
-      if (fromLS) setRid(fromLS);
-    }
-    // emailが未取得ならLS
-    if (!email) {
-      const fromLS = readEmailFromStorage();
-      if (fromLS) setEmail(fromLS);
-    }
-  }, []); // 初回のみ
+export function useResolvedRidEmail(): UseResolvedRidEmail {
+  const [rid, setRid] = useState('');
+  const [ridLocked, setRidLocked] = useState(false);
+  const [email, setEmail] = useState('');
 
-  // referrerフォールバック（最後の砦）
+  // email は控えとして保持（任意）
   useEffect(() => {
-    if (rid) return;
-    const refPick = pickFromUrl(typeof document !== 'undefined' ? document.referrer : null);
-    if (refPick.rid) setRid(refPick.rid);
-    if (!email && refPick.email) setEmail(refPick.email);
-  }, [rid, email]);
-
-  // 取得できたら保存
+    try { setEmail(localStorage.getItem('samurai:email') || ''); } catch {}
+  }, []);
   useEffect(() => {
-    if (rid) {
-      try { localStorage.setItem('samurai:rid', rid); } catch {}
-    }
-  }, [rid]);
-  useEffect(() => {
-    if (email && /\S+@\S+\.\S+/.test(email)) {
-      try { localStorage.setItem('samurai:email', email); } catch {}
-    }
+    try { localStorage.setItem('samurai:email', email); } catch {}
   }, [email]);
+
+  // rid を多段で解決：URL → Storage → Cookie → Referrer
+  useEffect(() => {
+    const fromUrl      = readRidFromUrl()?.trim();
+    const fromStorage  = readRidFromStorages();
+    const fromCookie   = readRidFromCookie();
+    const fromReferrer = readRidFromReferrer();
+
+    const found = fromUrl || fromStorage || fromCookie || fromReferrer;
+    if (found) {
+      const v = found.trim();
+      setRid(v);
+      setRidLocked(Boolean(fromUrl)); // URLに明示されていたらLock
+      try {
+        localStorage.setItem('samurai:rid', v);
+        sessionStorage.setItem('samurai:rid', v);
+        document.cookie = `samurai_rid=${encodeURIComponent(v)}; Path=/; Max-Age=1800; SameSite=Lax`;
+      } catch {}
+    }
+  }, []);
 
   return { rid, ridLocked, email, setEmail };
 }
