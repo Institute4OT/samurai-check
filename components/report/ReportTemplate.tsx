@@ -15,6 +15,9 @@ import { kabutoSrcByType, SamuraiLabel } from '@/lib/report/kabutoMap';
 import ReportCTA from './ReportCTA';
 import { genScoreFallbackBullets } from '@/lib/report/personalization';
 
+// ★ 追加：ridを各ストレージへ同期する小コンポーネント
+import RidSync from '@/components/rid/RidSync';
+
 // 日本語⇄英字キー
 import { KEY_TO_JA, type SamuraiKey, type SamuraiJa } from '@/lib/samuraiTypeMap';
 
@@ -150,6 +153,9 @@ function ReportBody({ data }: { data: ReportInput }) {
 
   return (
     <div id="print-root" className="printable-root">
+      {/* ★ 追加：結果画面表示時に rid を各ストレージへ同期 */}
+      <RidSync rid={data.resultId} />
+
       {/* ヘッダ */}
       <header className="flex items-start justify-between">
         <div className="flex items-center gap-3">
