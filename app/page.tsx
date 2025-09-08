@@ -13,7 +13,11 @@ import { generateScoreComments } from '@/lib/generateScoreComments';
 import { DISPLAY_ORDER, blockTitleByFirstPosition } from '@/lib/quizBlocks';
 import ResultPanel from '@/components/result/ResultPanel';
 
+/* ================= ユーティリティ ================= */
+
 const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
+
+/* ======================= 画面本体 ======================= */
 
 export default function Home() {
   const [currentStep, setCurrentStep] = useState<'start' | `q${number}` | 'result'>('start');
@@ -25,6 +29,7 @@ export default function Home() {
   const [userId, setUserId] = useState<string | null>(null);
   const [generatedComments, setGeneratedComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
 
+  // ❶ 表示順に並び替えた設問（選択肢だけランダム）
   const orderedQuestions = useMemo<QuizQuestionType[]>(() => {
     const byId = new Map(quizQuestions.map((q) => [q.id, q]));
     return DISPLAY_ORDER
@@ -33,42 +38,40 @@ export default function Home() {
       .map((q) => ({ ...q, options: shuffleArray(q.options) }));
   }, []);
 
-  useEffect(() => setShuffledQuestions(orderedQuestions), [orderedQuestions]);
+  useEffect(() => {
+    setShuffledQuestions(orderedQuestions);
+  }, [orderedQuestions]);
 
-  // ここで rid を先に確定して見せる。DB への保存は後続（失敗しても表示は維持）
+  // Supabase へ結果保存（行の作成まで。確定は ResultPanel 内の FinalizeOnMount）
   const saveResultsToSupabase = async (
     scores: CategoryScores,
     judgedType: SamuraiType,
     answers: { questionId: number; selectedAnswers: string[] }[],
   ) => {
-    const rid =
-      globalThis.crypto?.randomUUID?.() ??
-      `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
-    // まずは表示・引継ぎ用に保存
-    setUserId(rid);
     try {
-      localStorage.setItem('samurai:rid', rid);
-      sessionStorage.setItem('samurai:rid', rid);
-      document.cookie = `samurai_rid=${encodeURIComponent(rid)}; Path=/; Max-Age=1800; SameSite=Lax`;
-    } catch {}
+      const generatedUserId =
+        globalThis.crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-    // 監査用スナップショット
-    const scorePattern: Record<string, string[]> = {};
-    answers.forEach((a) => (scorePattern[`Q${a.questionId}`] = a.selectedAnswers));
+      const scorePattern: Record<string, string[]> = {};
+      answers.forEach((a) => {
+        scorePattern[`Q${a.questionId}`] = a.selectedAnswers;
+      });
 
-    const resultData: Partial<SamuraiResult> & Record<string, any> = {
-      id: rid,
-      score_pattern: scorePattern,
-      samurai_type: String(judgedType), // 旧列（互換）
-      name: null,
-      email: null,
-      company_size: null,
-    };
+      const resultData: Partial<SamuraiResult> & Record<string, any> = {
+        id: generatedUserId,
+        score_pattern: scorePattern,  // 回答スナップショット（監査用）
+        samurai_type: String(judgedType), // 旧列（互換用）。確定は Finalize API が担当
+        name: null,
+        email: null,
+        company_size: null,
+      };
 
-    // 失敗しても続行（Finalize API があとで確定保存・作成まで行う）
-    const { error } = await supabase.from('samurairesults').insert(resultData);
-    if (error) console.warn('[saveResultsToSupabase] insert failed:', error);
+      const { error } = await supabase.from('samurairesults').insert(resultData).select();
+      if (error) console.error('Error saving results to Supabase:', error);
+      else setUserId(generatedUserId);
+    } catch (error) {
+      console.error('Error generating UUID or saving to Supabase:', error);
+    }
   };
 
   const startQuiz = () => {
@@ -85,6 +88,13 @@ export default function Home() {
     const currentQuestion = shuffledQuestions[currentPos - 1];
     if (!currentQuestion) return;
 
+    // ★ 未回答ガード（UI無効化に加えてロジックでも二重にブロック）
+    if (selectedAnswers.length === 0) {
+      // ここでは alert で明確に止める（他の導線でも誤作動しないように）
+      alert('少なくとも1つは選んでください。');
+      return;
+    }
+
     const newAnswer = { questionId: currentQuestion.id, selectedAnswers: [...selectedAnswers] };
     const updatedAllAnswers = [...allAnswers, newAnswer];
     setAllAnswers(updatedAllAnswers);
@@ -94,8 +104,10 @@ export default function Home() {
     } else {
       const scores = calculateCategoryScores(updatedAllAnswers);
       setFinalScores(scores);
+
       const judged = judgeSamuraiType(scores);
       setSamuraiType(judged);
+
       const comments = generateScoreComments(scores);
       setGeneratedComments(comments);
 
@@ -122,8 +134,10 @@ export default function Home() {
     }
   };
 
+  // ===== スタート画面 =====
   if (currentStep === 'start') return <StartScreen startQuiz={startQuiz} />;
 
+  // ===== 結果画面 =====
   if (currentStep === 'result') {
     return (
       <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
@@ -138,6 +152,7 @@ export default function Home() {
     );
   }
 
+  // ===== 質問画面（q1, q2, ...） =====
   if (String(currentStep).startsWith('q')) {
     const position = parseInt(String(currentStep).replace('q', ''), 10);
     const currentQuestion = shuffledQuestions[position - 1];
@@ -187,6 +202,7 @@ export default function Home() {
     );
   }
 
+  // フォールバック
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
       <div className="text-center">

@@ -125,7 +125,7 @@ export default function ReportRequestFormPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded-md border px-3 py-2"
-              placeholder="例）今川ヨシタカ"
+              placeholder="例）山田 花子"
             />
           </div>
           <div>
@@ -148,7 +148,7 @@ export default function ReportRequestFormPage() {
             value={company}
             onChange={(e) => setCompany(e.target.value)}
             className="w-full rounded-md border px-3 py-2"
-            placeholder="例）（株）今川焼"
+            placeholder="例）（株）サンプル"
           />
         </div>
 
