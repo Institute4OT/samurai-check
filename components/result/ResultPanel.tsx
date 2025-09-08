@@ -6,10 +6,14 @@ import { Button } from '@/components/ui/button';
 import ShareModal from '@/components/common/ShareModal';
 import { Share2 } from 'lucide-react';
 import FinalizeOnMount from '@/components/result/FinalizeOnMount';
-import { normalizeToCatArray, resolveSamuraiType, getEmojiLabel } from '@/lib/result/normalize';
+import {
+  normalizeToCatArray,
+  resolveSamuraiType,
+  getEmojiLabel,
+} from '@/lib/result/normalize';
 import { samuraiDescriptions } from '@/lib/samuraiJudge';
 
-// ★ 追加：診断IDバッジ＆RID同期
+// 診断IDバッジ＆RID同期
 import IdBadge from '@/components/result/IdBadge';
 import RidSync from '@/components/rid/RidSync';
 
@@ -20,8 +24,8 @@ function isIdish(v?: string | null) {
   if (!v) return false;
   const s = String(v).trim();
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;                  // Crockford base32
-  const nano = /^[a-zA-Z0-9_-]{16,}$/;                      // 16文字以上の英数-_ を許容
+  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/; // Crockford base32
+  const nano = /^[a-zA-Z0-9_-]{16,}$/;     // 16文字以上の英数-_ を許容
   return uuid.test(s) || ulid.test(s) || nano.test(s);
 }
 
@@ -55,6 +59,8 @@ type Props = {
   samuraiType: string | null;
   comments: { strengths: string[]; tips: string[] };
   onRestart: () => void;
+  /** Finalize に渡す回答スナップショット（Q→選択肢の配列） */
+  scorePattern?: Record<string, string[]> | null;
 };
 
 /* ========= 本体 ========= */
@@ -64,6 +70,7 @@ export default function ResultPanel({
   samuraiType,
   comments,
   onRestart,
+  scorePattern,
 }: Props) {
   // ridを props → URL の順で堅牢に解決
   const ridResolved = useMemo<string>(() => {
@@ -73,23 +80,25 @@ export default function ResultPanel({
   }, [rid]);
 
   const categoriesFixed = useMemo(() => normalizeToCatArray(finalScores), [finalScores]);
-  const typeResolved   = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
-  const displayName    = typeResolved.display || samuraiType || '武将';
+  const typeResolved = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
+  const displayName = typeResolved.display || samuraiType || '武将';
 
   const [shareOpen, setShareOpen] = useState(false);
 
   return (
     <div className="text-center max-w-4xl mx-auto p-8">
-      {/* ★ RID を local/session/cookie に同期（フォーム自動入力の要） */}
+      {/* RID を local/session/cookie に同期（フォーム自動入力の要） */}
       {isIdish(ridResolved) && <RidSync rid={ridResolved} />}
 
-      {/* DBスナップショット確定（UI非表示） */}
-      {isIdish(ridResolved) && categoriesFixed.length > 0 && (
+      {/* DBスナップショット確定（UI非表示）
+          ※ rid が空でも Finalize 側で新規発行できるので、カテゴリが揃っていれば実行 */}
+      {categoriesFixed.length > 0 && (
         <FinalizeOnMount
           rid={ridResolved}
           samuraiTypeKey={typeResolved.key}
           samuraiTypeJa={typeResolved.ja}
           categories={categoriesFixed.map((c) => ({ key: c.key, score: c.score }))}
+          scorePattern={scorePattern ?? null}
         />
       )}
 
@@ -97,11 +106,9 @@ export default function ResultPanel({
 
       {!!displayName && (
         <div className="mb-6 p-6 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 rounded-lg">
-          <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-3">
-            {displayName}
-          </h1>
+          <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-3">{displayName}</h1>
 
-          {/* ★ 診断IDバッジ（コピー可） */}
+          {/* 診断IDバッジ（コピー可） */}
           {isIdish(ridResolved) && (
             <div className="flex items-center justify-center mb-2">
               <IdBadge rid={ridResolved} />
@@ -134,14 +141,16 @@ export default function ResultPanel({
         {categoriesFixed.map(({ key, label, score }) => {
           const emojiLabel = getEmojiLabel(score);
           const color =
-            score >= 2.5 ? 'text-green-600'
-            : score >= 2.0 ? 'text-yellow-600'
-            : 'text-red-600';
+            score >= 2.5 ? 'text-green-600' :
+            score >= 2.0 ? 'text-yellow-600' :
+            'text-red-600';
           return (
             <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="font-medium">{label}</span>
               <div className="flex items-center">
-                <span className={`text-lg font-bold ${color}`}>{Math.min(score, 3).toFixed(2)}点</span>
+                <span className={`text-lg font-bold ${color}`}>
+                  {Math.min(score, 3).toFixed(2)}点
+                </span>
                 <span className="text-sm font-medium text-gray-800 ml-2">{emojiLabel}</span>
               </div>
             </div>
@@ -207,7 +216,9 @@ export default function ResultPanel({
           src="/images/logo.png"
           alt="企業の未来づくり研究所ロゴ"
           className="w-[40px] h-auto opacity-70 hover:opacity-90"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.visibility = 'hidden';
+          }}
         />
         <span>© 一般社団法人 企業の未来づくり研究所</span>
       </a>
