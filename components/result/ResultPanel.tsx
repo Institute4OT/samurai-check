@@ -13,14 +13,51 @@ import { samuraiDescriptions } from '@/lib/samuraiJudge';
 import IdBadge from '@/components/result/IdBadge';
 import RidSync from '@/components/rid/RidSync';
 
+/* ========= ユーティリティ ========= */
+
+/** UUID / ULID / NanoID(16+英数) をざっくり許容 */
+function isIdish(v?: string | null) {
+  if (!v) return false;
+  const s = String(v).trim();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;                  // Crockford base32
+  const nano = /^[a-zA-Z0-9_-]{16,}$/;                      // 16文字以上の英数-_ を許容
+  return uuid.test(s) || ulid.test(s) || nano.test(s);
+}
+
+/** URL から rid を拾う（?rid= / ?resultId= / パス断片の両対応） */
+function pickRidFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    // 1) よくあるキー名を順に探索
+    const keys = ['rid', 'resultId', 'resultid', 'id'];
+    for (const k of keys) {
+      const v = url.searchParams.get(k);
+      if (isIdish(v)) return String(v);
+    }
+    // 2) パス断片から後ろ向きに探索
+    const segs = url.pathname.split('/').filter(Boolean);
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const p = decodeURIComponent(segs[i] || '');
+      if (isIdish(p)) return p;
+    }
+  } catch {
+    // noop
+  }
+  return null;
+}
+
+/* ========= Props ========= */
 type Props = {
-  rid: string;
+  rid?: string | null;
   finalScores: Record<string, unknown> | null;
   samuraiType: string | null;
   comments: { strengths: string[]; tips: string[] };
   onRestart: () => void;
 };
 
+/* ========= 本体 ========= */
 export default function ResultPanel({
   rid,
   finalScores,
@@ -28,21 +65,28 @@ export default function ResultPanel({
   comments,
   onRestart,
 }: Props) {
+  // ridを props → URL の順で堅牢に解決
+  const ridResolved = useMemo<string>(() => {
+    if (isIdish(rid)) return String(rid);
+    const fromUrl = pickRidFromLocation();
+    return fromUrl ?? '';
+  }, [rid]);
+
   const categoriesFixed = useMemo(() => normalizeToCatArray(finalScores), [finalScores]);
-  const typeResolved = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
-  const displayName = typeResolved.display || samuraiType || '武将';
+  const typeResolved   = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
+  const displayName    = typeResolved.display || samuraiType || '武将';
 
   const [shareOpen, setShareOpen] = useState(false);
 
   return (
     <div className="text-center max-w-4xl mx-auto p-8">
       {/* ★ RID を local/session/cookie に同期（フォーム自動入力の要） */}
-      {!!rid && <RidSync rid={rid} />}
+      {isIdish(ridResolved) && <RidSync rid={ridResolved} />}
 
       {/* DBスナップショット確定（UI非表示） */}
-      {rid && categoriesFixed.length > 0 && (
+      {isIdish(ridResolved) && categoriesFixed.length > 0 && (
         <FinalizeOnMount
-          rid={rid}
+          rid={ridResolved}
           samuraiTypeKey={typeResolved.key}
           samuraiTypeJa={typeResolved.ja}
           categories={categoriesFixed.map((c) => ({ key: c.key, score: c.score }))}
@@ -57,10 +101,10 @@ export default function ResultPanel({
             {displayName}
           </h1>
 
-          {/* ★ 診断IDバッジを表示（コピーも可） */}
-          {!!rid && (
+          {/* ★ 診断IDバッジ（コピー可） */}
+          {isIdish(ridResolved) && (
             <div className="flex items-center justify-center mb-2">
-              <IdBadge rid={rid} />
+              <IdBadge rid={ridResolved} />
             </div>
           )}
 
@@ -140,8 +184,12 @@ export default function ResultPanel({
         >
           もう一度診断する
         </button>
+
         <button
-          onClick={() => (window.location.href = `/form${rid ? `?rid=${encodeURIComponent(rid)}` : ''}`)}
+          onClick={() => {
+            const q = isIdish(ridResolved) ? `?rid=${encodeURIComponent(ridResolved)}` : '';
+            window.location.href = `/form${q}`;
+          }}
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg hover:shadow-xl"
         >
           あなた専用の詳細レポートを受け取る（無料）
