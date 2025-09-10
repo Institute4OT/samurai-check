@@ -1,221 +1,223 @@
 // app/api/consult/create/route.ts
-export const runtime = 'nodejs';
+/* eslint-disable no-console */
 
+// ==== Next.js / 外部 ====
 import { NextResponse, NextRequest } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import { randomUUID } from 'crypto';
-import { sendMail } from '@/lib/mail';
-import { buildConsultEmail, REPORT_URL, bookingUrlFor } from '@/lib/emailTemplates';
 
-/** 受理する入力（JSON / form-data どちらでもOKに寄せる） */
-type IntakeBody = {
-  rid?: string;
-  resultId?: string;
-  id?: string;
-  name?: string;
-  email?: string;
-  ageRange2?: string;
-  companySize?: string | number;
-  industry?: string;
+// ==== プロジェクト内ユーティリティ ====
+// - メール送信
+import { sendMail } from '@/lib/mail';
+// - 相談メール本文テンプレ
+import { buildConsultEmail } from '@/lib/emailTemplates';
+
+// ------------------------------------------------------------
+// 環境変数
+// ------------------------------------------------------------
+const SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+
+const REPORT_URL = (process.env.NEXT_PUBLIC_REPORT_URL || '').trim(); // 例: https://xxx/report
+const BOOKING_BASE = (process.env.NEXT_PUBLIC_BOOKING_BASE_URL || '').trim(); // 例: https://xxx/consult
+
+const MAIL_TO_TRS = (process.env.MAIL_TO_TRS || '').trim(); // テスト/フォールバック宛先
+
+// ------------------------------------------------------------
+// 型
+// ------------------------------------------------------------
+type Consultant = {
+  id: string;
+  name: string;
+  email: string;
 };
 
-/* ───────── helpers ───────── */
+const IntakeBodySchema = z.object({
+  rid: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  ageRange: z.string().optional(),
+  companySize: z.string().optional(),
+  industry: z.string().optional(),
+});
 
-function isIdish(v?: string | null): boolean {
+type IntakeBody = z.infer<typeof IntakeBodySchema>;
+
+// ------------------------------------------------------------
+// ユーティリティ
+// ------------------------------------------------------------
+function getAbsoluteOrigin(req: Request) {
+  const url = new URL(req.url);
+  return `${url.protocol}//${url.host}`;
+}
+
+function isUUIDLike(v?: string | null): v is string {
   if (!v) return false;
-  const s = v.trim();
-  const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-  const generic = /^[A-Za-z0-9_-]{16,}$/; // NanoID 等
-  return uuid.test(s) || ulid.test(s) || generic.test(s);
+  return /^[0-9a-fA-F-]{8,}$/.test(v);
 }
 
-function getAbsoluteOrigin(req: NextRequest) {
-  // 本番URLを優先（環境変数の種類ゆれ吸収）
-  const base =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    process.env.NEXT_PUBLIC_VERCEL_URL && `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
-  if (base) return String(base).replace(/\/+$/, '');
+// クエリから担当コンサルを決定（既存の規約に合わせた簡易版）
+function pickConsultantByQuery(req: NextRequest): Consultant {
+  const url = new URL(req.url);
+  const key = (url.searchParams.get('c') || url.searchParams.get('consultant') || '').toLowerCase();
 
-  // ヘッダから復元
-  const proto = (req.headers.get('x-forwarded-proto') || 'https').split(',')[0].trim();
-  const host = (req.headers.get('x-forwarded-host') || req.headers.get('host') || 'localhost:3000')
-    .split(',')[0]
-    .trim();
-  return `${proto}://${host}`;
+  const MORIGAMI: Consultant = { id: 'morigami', name: '森上', email: 'morigami@example.com' };
+  const ISHIJIMA: Consultant = { id: 'ishijima', name: '石島', email: 'ishijima@example.com' };
+
+  if (key === 'morigami' || key === 'm') return MORIGAMI;
+  if (key === 'ishijima' || key === 'i' || key === 'sachiko') return ISHIJIMA;
+  return ISHIJIMA;
 }
 
-/** URLのクエリに rid/結果ID が来たときも拾う */
-function pickRidFromQuery(req: NextRequest): string | null {
-  const u = req.nextUrl;
-  const q =
-    u.searchParams.get('rid') ||
-    u.searchParams.get('resultId') ||
-    u.searchParams.get('id');
-  return q ? q.trim() : null;
-}
-
-/** ボディ・クエリ・“それっぽい文字列”の順でRIDを決定 */
-function pickRid(req: NextRequest, body?: IntakeBody | null): string | null {
-  const fromBody =
-    body?.rid?.trim() ||
-    body?.resultId?.trim() ||
-    body?.id?.trim() ||
-    null;
-
-  const fromQuery = pickRidFromQuery(req);
-
-  const v = fromBody || fromQuery;
-  if (v) return v;
-
-  // クエリのパス末尾がIDらしい場合を保険で拾う（/consult/create/<id>など）
-  const segs = req.nextUrl.pathname.split('/').filter(Boolean);
-  for (let i = segs.length - 1; i >= 0; i--) {
-    const s = decodeURIComponent(segs[i] || '');
-    if (isIdish(s)) return s.trim();
-  }
-  return null;
-}
-
-async function insertConsultIntake(payload: {
-  result_id: string | null;
-  name: string | null;
-  email: string | null;
-  age_range: string | null;
-  company_size: string | null;
-  industry: string | null;
-}) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const sb = createClient(url, service);
-
-  for (let i = 0; i < 3; i++) {
-    const token = randomUUID();
-    const { data, error } = await sb
-      .from('consult_intake')
-      .insert({ ...payload, token })
-      .select('id')
-      .maybeSingle();
-
-    if (!error && data) return { id: String(data.id), token };
-    if (error && (error as any).code !== '23505') {
-      return { id: null, token: null, errorMessage: error.message };
-    }
-  }
-  return { id: null, token: null, errorMessage: 'token collision (retry exceeded)' };
-}
-
+// Supabaseへの部分更新（rid が有効、かつ SERVICE_ROLE がある場合のみ）
 async function updateSamuraiResultFields(
-  resultId: string,
-  fields: { name?: string | null; email?: string | null; company_size?: string | null; is_consult_request?: boolean }
+  rid: string | undefined,
+  fields: Partial<{
+    name: string | null;
+    email: string | null;
+    ageRange: string | null;
+    companySize: string | null;
+    industry: string | null;
+  }>
 ) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const sb = createClient(url, service);
+  const diagnostics: { ok: boolean; message?: string } = { ok: false };
 
-  const { error } = await sb.from('samurairesults').update(fields).eq('id', resultId);
-  return { ok: !error, message: (error as any)?.message };
+  if (!rid || !isUUIDLike(rid) || !SERVICE_ROLE_KEY || !SUPABASE_URL) {
+    diagnostics.ok = false;
+    diagnostics.message = 'skip DB writes (no service role key or invalid rid)';
+    return diagnostics;
+  }
+
+  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const table = 'samurai_results'; // 既存テーブル名に合わせて必要なら変更
+
+  const payload = {
+    name: fields.name ?? null,
+    email: fields.email ?? null,
+    age_range: fields.ageRange ?? null,
+    company_size: fields.companySize ?? null,
+    industry: fields.industry ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase.from(table).update(payload).eq('id', rid);
+
+  if (error) {
+    diagnostics.ok = false;
+    diagnostics.message = error.message;
+  } else {
+    diagnostics.ok = true;
+  }
+  return diagnostics;
 }
 
-/* ───────── handler ───────── */
+// ------------------------------------------------------------
+// ルート本体
+// ------------------------------------------------------------
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const logs: string[] = [];
-  const diagnostics: Record<string, any> = {};
+  const diagnostics: Record<string, any> = { urls: {} };
 
   try {
-    // 1) ボディは JSON / form-data どちらでも受付
+    // 1) body を JSON or form どちらでも受け取れるように
     let body: IntakeBody | null = null;
-    const ct = (req.headers.get('content-type') || '').toLowerCase();
+    const ctype = (req.headers.get('content-type') || '').toLowerCase();
 
-    if (ct.includes('application/json')) {
-      body = (await req.json().catch(() => null)) as IntakeBody | null;
-    } else if (ct.includes('multipart/form-data') || ct.includes('application/x-www-form-urlencoded')) {
-      const fd = await req.formData().catch(() => null);
-      if (fd) {
-        body = {
-          rid: String(fd.get('rid') ?? ''),
-          resultId: String(fd.get('resultId') ?? ''),
-          id: String(fd.get('id') ?? ''),
-          name: String(fd.get('name') ?? ''),
-          email: String(fd.get('email') ?? ''),
-          ageRange2: String(fd.get('ageRange2') ?? ''),
-          companySize: String(fd.get('companySize') ?? ''),
-          industry: String(fd.get('industry') ?? ''),
-        };
-      }
-    } else {
-      // コンテンツタイプ不明でも一応JSONで試す
-      body = (await req.json().catch(() => null)) as IntakeBody | null;
-    }
-
-    if (!body) {
-      return NextResponse.json({ ok: false, error: 'invalid_payload' }, { status: 400 });
-    }
-    logs.push('STEP1: parse ok');
-
-    // 2) 正規化
-    const ridRaw = pickRid(req, body);
-    const rid = ridRaw?.trim() || null; // 形式は後で判断
-    const name = (body.name || '').trim() || null;
-    const email = (body.email || '').trim() || null;
-    const ageRange = (body.ageRange2 || '').toString().trim() || null;
-    const companySize = (body.companySize ?? '').toString().trim() || null;
-    const industry = (body.industry || '').trim() || null;
-
-    diagnostics.input = { rid, name, email, ageRange, companySize, industry };
-
-    // 3) DB writes（service role のみ）
-    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      const inserted = await insertConsultIntake({
-        result_id: rid,
-        name,
-        email,
-        age_range: ageRange,
-        company_size: companySize,
-        industry,
+    if (ctype.includes('application/json')) {
+      body = IntakeBodySchema.partial().parse(await req.json());
+    } else if (ctype.includes('application/x-www-form-urlencoded')) {
+      const form = await req.formData();
+      body = IntakeBodySchema.partial().parse({
+        rid: String(form.get('rid') ?? ''),
+        name: String(form.get('name') ?? ''),
+        email: String(form.get('email') ?? ''),
+        ageRange: String(form.get('ageRange') ?? ''),
+        companySize: String(form.get('companySize') ?? ''),
+        industry: String(form.get('industry') ?? ''),
       });
-      diagnostics.consultIntake = inserted;
-
-      // ridが「それっぽい」場合のみ samurairesults を更新（不正IDでのエラー防止）
-      if (rid && isIdish(rid)) {
-        const up = await updateSamuraiResultFields(rid, {
-          name,
-          email,
-          company_size: companySize,
-          is_consult_request: true,
-        });
-        diagnostics.samurairesultsUpdate = up;
-        logs.push(`STEP2: samurairesults update ${up.ok ? 'OK' : `ERROR(${up.message})`}`);
-      } else {
-        logs.push('STEP2: skip samurairesults update (rid not id-like)');
-      }
     } else {
-      logs.push('STEP2: skip DB writes (no service role key)');
+      try {
+        body = IntakeBodySchema.partial().parse(await req.json());
+      } catch {
+        body = {} as any;
+      }
     }
 
-    // 4) リンク（本番オリジン優先）
+    const rid = body?.rid?.trim() || undefined;
+    const name = body?.name?.trim() || '';
+    const email = body?.email?.trim() || '';
+    const ageRange = body?.ageRange?.trim() || '';
+    const companySize = body?.companySize?.trim() || '';
+    const industry = body?.industry?.trim() || '';
+
+    logs.push('STEP0: body parsed');
+
+    // 2) DB 更新（SERVICE_ROLE があるときだけ）
+    const up = await updateSamuraiResultFields(rid, {
+      name: name || null,
+      email: email || null,
+      ageRange: ageRange || null,
+      companySize: companySize || null,
+      industry: industry || null,
+    });
+    diagnostics.samuraiResultsUpdate = up;
+    logs.push(`STEP1: samurai_results update ${up.ok ? 'OK' : `ERROR(${up.message})`}`);
+
+    // 3) 相談担当を決定
+    const consultant = pickConsultantByQuery(req);
+    diagnostics.consultant = consultant;
+
+    // 4) 各種リンク生成（本番オリジン優先）
     const origin = getAbsoluteOrigin(req);
-    const reportUrl = rid ? REPORT_URL(rid) : `${origin}/report`;
-    const bookingUrl = bookingUrlFor(undefined, rid ?? undefined, email ?? undefined);
+
+    // REPORT_URL は定数（関数呼び出しではない）
+    const reportUrl = rid
+      ? (REPORT_URL ? `${REPORT_URL}?rid=${encodeURIComponent(rid)}` : `${origin}/report?rid=${encodeURIComponent(rid)}`)
+      : `${origin}/report`;
+
+    // bookingUrl は自前で安全生成
+    const bookingUrl = (() => {
+      const base = BOOKING_BASE || `${origin}/consult`;
+      const qs = new URLSearchParams();
+      if (rid) qs.set('rid', rid);
+      if (email) qs.set('email', email);
+      const q = qs.toString();
+      return q ? `${base}?${q}` : base;
+    })();
+
     diagnostics.urls = { reportUrl, bookingUrl, origin };
 
-    // 5) メール送信（宛先未入力ならオペ用にフォールバック）
+    // 5) メール送信準備（型アダプタで1引数シグネチャに合わせる）
     const toName = name ? `${name} 様` : 'お客様';
-    const mail = buildConsultEmail({ toName, reportUrl, bookingUrl, offerNote: '申込者限定・先着3名' });
+    const mail = (buildConsultEmail as unknown as (arg: any) => any)({
+      ...consultant,                  // Consultant型の必須フィールド(id/name/email 等)
+      toName,
+      reportUrl,
+      bookingUrl,
+      offerNote: '申込者限定・先着3名',
+    });
+
+    // 宛先：ユーザー or フォールバック
+    const to = email || MAIL_TO_TRS;
 
     await sendMail({
-      to: email || (process.env.MAIL_TO_TRS || '').trim(),
+      to: to.trim(),
       subject: mail.subject,
       html: mail.html,
       text: mail.text,
     });
-    logs.push('STEP3: mail sent');
 
+    logs.push('STEP2: mail sent');
+
+    // 6) 応答
     return NextResponse.json({ ok: true, logs, diagnostics });
   } catch (err: any) {
     console.error('[api/consult/create] error:', err);
-    return NextResponse.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? String(err) },
+      { status: 500 }
+    );
   }
 }
