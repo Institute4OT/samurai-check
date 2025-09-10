@@ -1,228 +1,130 @@
-// app/api/report-request/route.ts
-import { NextResponse } from "next/server";
-import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
-import { sendMail } from "@/lib/mail";
+// /app/api/report-request/route.ts
+// ============================================================
+// 「武将タイプ診断」詳細レポート送信API（最終版・エラー解消）
+// - POST: { diagId: string(UUID) }
+// - Supabaseから診断レコード取得 → emailTemplate生成 → Resend送信
+// - ?dry=1 でドライラン（送信しない）
+// ============================================================
 
-/* ====== helpers ====== */
-function mustEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
-function getSiteOrigin(req: Request) {
-  const env = process.env.NEXT_PUBLIC_SITE_URL;
-  if (env && /^https?:\/\//i.test(env)) return env.replace(/\/+$/, "");
-  return new URL(req.url).origin;
-}
-function getSpirUrl(c?: string | null) {
-  if (c === "ishijima") return process.env.NEXT_PUBLIC_SPIR_ISHIJIMA_URL || "";
-  if (c === "morigami") return process.env.NEXT_PUBLIC_SPIR_MORIGAMI_URL || "";
-  return "";
-}
-function counselorLabel(c?: string | null) {
-  if (c === "ishijima") return "石島（SACHIKO）";
-  if (c === "morigami") return "森上";
-  return "担当未確定";
-}
-function buttonHtml(href: string, label: string) {
-  const safeHref = href || "#";
-  return `<a href="${safeHref}" target="_blank" rel="noopener"
-    style="display:inline-block;padding:12px 18px;background:#111;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;">
-    ${label}</a>`;
-}
+export const runtime = 'nodejs'; // ★ ResendはNodeランタイム推奨
 
-/** UUID/ULID/NanoID をゆるく許容（弾かず、非標準は警告ログのみ） */
-function isIdish(v: string) {
-  const s = v.trim();
-  const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;          // ULID（Base32, 大文字）
-  const generic = /^[A-Za-z0-9_-]{16,}$/;            // NanoID 等の汎用
-  return uuid.test(s) || ulid.test(s) || generic.test(s);
+import { NextResponse, NextRequest } from 'next/server';
+import { z } from 'zod';
+import { createClient } from '@supabase/supabase-js';
+import { buildReportEmail } from '@/lib/emailTemplates'; // ← プロジェクトの実ファイル名/パスに合わせて
+import sendMail from '@/lib/mail';
+
+// ---------- 環境変数 ----------
+const PUBLIC_BASE_URL =
+  process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+const OPENCHAT_URL = process.env.NEXT_PUBLIC_OPENCHAT_URL || '';
+const OPENCHAT_QR = process.env.NEXT_PUBLIC_OPENCHAT_QR || '';
+const SHARE_URL = process.env.NEXT_PUBLIC_SHARE_URL || '';
+const CONSULT_URL = process.env.NEXT_PUBLIC_CONSULT_URL || '';
+const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || undefined;
+
+// Supabase（読み取りのみなら ANON でOK）
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+if (!SUPABASE_URL || !SUPABASE_ANON) {
+  console.warn(
+    '[report-request] NEXT_PUBLIC_SUPABASE_URL / ANON_KEY が未設定です'
+  );
 }
 
-/** 受信payloadの正規化（キー名の揺れを吸収） */
-function normalizeBody(input: any) {
-  const ridSrc = input?.rid ?? input?.resultId ?? "";
-  const rid = String(ridSrc || "").trim();
-
-  const name = String(input?.name ?? "").trim();
-  const email = String(input?.email ?? "").trim();
-
-  const company_size = input?.company_size ?? input?.companySize ?? "";
-  const company_name = input?.company_name ?? input?.company ?? null;
-  const industry = input?.industry ?? null;
-  const age_range = input?.age_range ?? input?.age_band ?? null;
-
-  return { rid, name, email, company_size, company_name, industry, age_range };
-}
-
-/* ====== Mail builders ====== */
-function makeUserMail(params: {
-  to: string; name: string; reportUrl: string;
-  counselor?: string | null; spirUrl?: string; fallbackConsultUrl: string;
-  company_size?: string; company_name?: string | null; industry?: string | null; age_range?: string | null;
-}) {
-  const subject = "【IOT】詳細レポートURLのご案内／無料個別相談について";
-  const consultBtn = params.spirUrl
-    ? buttonHtml(params.spirUrl!, `無料個別相談を予約（${counselorLabel(params.counselor)}）`)
-    : buttonHtml(params.fallbackConsultUrl, "まずは相談内容を送る");
-  const reportBtn = buttonHtml(params.reportUrl, "詳細レポートを開く");
-  const html = `
-  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.8;">
-    <p>${params.name} 様</p>
-    <p>一般社団法人 <strong>企業の未来づくり研究所</strong>です。<br/>
-       詳細レポートのお申込みありがとうございます。以下のボタンからレポートにアクセスできます。</p>
-    <div style="margin:16px 0;">${reportBtn}</div>
-    <h3 style="margin-top:24px;margin-bottom:8px;">無料個別相談（30分）</h3>
-    <p>レポート内容をもとに、今後の進め方をご一緒に整理します。</p>
-    <div style="margin:8px 0 16px 0;">${consultBtn}</div>
-    <hr style="border:none;border-top:1px solid #eee;margin:24px 0;" />
-    <p style="font-size:13px;color:#666;margin:0 0 6px;">申込内容（控え）</p>
-    <ul style="font-size:13px;color:#666;margin:0;padding-left:18px;">
-      <li>会社名：${params.company_name ?? ""}</li>
-      <li>会社規模：${params.company_size ?? ""}</li>
-      <li>業種：${params.industry ?? ""}</li>
-      <li>年齢帯：${params.age_range ?? ""}</li>
-      <li>担当：${counselorLabel(params.counselor)}</li>
-    </ul>
-    <p style="font-size:12px;color:#888;margin-top:24px;">※本メールは自動送信です。お心当たりがない場合は破棄してください。<br/>© Institute for Our Transformation</p>
-  </div>`;
-  return { to: params.to, subject, html };
-}
-
-function makeOpsMail(params: {
-  rid: string; name: string; email: string; reportUrl: string;
-  company_size?: string; company_name?: string | null; industry?: string | null; age_range?: string | null;
-  counselor?: string | null; spirUrl?: string; fallbackConsultUrl: string;
-}) {
-  const subject = `【IOT/通知】詳細レポート申込: ${params.name} (${params.email})`;
-  const html = `
-  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.8;">
-    <h3>詳細レポート申込 受付</h3>
-    <ul>
-      <li>rid: ${params.rid}</li>
-      <li>氏名: ${params.name}</li>
-      <li>メール: ${params.email}</li>
-      <li>会社名: ${params.company_name ?? ""}</li>
-      <li>会社規模: ${params.company_size ?? ""}</li>
-      <li>業種: ${params.industry ?? ""}</li>
-      <li>年齢帯: ${params.age_range ?? ""}</li>
-      <li>担当: ${counselorLabel(params.counselor)}</li>
-    </ul>
-    <p>レポートURL：<a href="${params.reportUrl}" target="_blank" rel="noopener">${params.reportUrl}</a></p>
-    <p>相談URL：<a href="${params.spirUrl || params.fallbackConsultUrl}" target="_blank" rel="noopener">
-      ${params.spirUrl || params.fallbackConsultUrl}
-    </a></p>
-  </div>`;
-  const to = process.env.MAIL_OPS_TO || "";
-  return { to, subject, html };
-}
-
-/* ====== 入力スキーマ（ゆるく・統一） ====== */
-const Schema = z.object({
-  rid: z.string().min(8),                      // ← uuid() から緩和
-  name: z.string().min(1),
-  email: z.string().email(),
-  company_size: z.union([z.string(), z.number()]),
-  company_name: z.string().optional().nullable(),
-  industry: z.string().optional().nullable(),
-  age_range: z.string().optional().nullable(),
+// ---------- 入力スキーマ ----------
+const BodySchema = z.object({
+  diagId: z.string().uuid(),
 });
 
-export async function POST(req: Request) {
+// ---------- 便利レスポンス ----------
+const ok = (json: any, status = 200) =>
+  NextResponse.json(json, { status });
+const bad = (msg: string, status = 400) =>
+  NextResponse.json({ ok: false, error: msg }, { status });
+
+// ---------- ハンドラ ----------
+export async function POST(req: NextRequest) {
+  const dryRun = req.nextUrl.searchParams.get('dry') === '1';
+
+  // 入力パース
+  let payload: z.infer<typeof BodySchema>;
   try {
-    const json = await req.json().catch(() => ({}));
-    const normalized = normalizeBody(json);
-    const body = Schema.parse(normalized);
-
-    // 形式は緩く検査：不一致はログのみ
-    if (!isIdish(body.rid)) {
-      console.warn("[report-request] non-standard rid received:", body.rid);
-    }
-
-    const supabase = createClient(
-      mustEnv("NEXT_PUBLIC_SUPABASE_URL"),
-      mustEnv("SUPABASE_SERVICE_ROLE_KEY"),
-      { auth: { persistSession: false } }
-    );
-
-    // 1) samurairesults を更新
-    const { error: upErr } = await supabase
-      .from("samurairesults")
-      .update({
-        name: body.name,
-        email: body.email,
-        company_size: body.company_size,
-        company_name: body.company_name ?? null,
-        industry: body.industry ?? null,
-        age_range: body.age_range ?? null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", body.rid);
-
-    if (upErr) {
-      console.error("[report-request] update error:", upErr);
-      return NextResponse.json({ ok: false, message: "DB update failed" }, { status: 500 });
-    }
-
-    // 2) 担当者取得
-    const { data: row } = await supabase
-      .from("samurairesults")
-      .select("assigned_counselor")
-      .eq("id", body.rid)
-      .single<{ assigned_counselor: "ishijima" | "morigami" | null }>();
-
-    // 3) メール作成・送信
-    const origin = getSiteOrigin(req);
-    const reportUrl = `${origin}/report?rid=${body.rid}`;
-    const counselor = row?.assigned_counselor ?? null;
-    const spirUrl = getSpirUrl(counselor);
-    const fallbackConsultUrl = `${origin}/consult/start?rid=${body.rid}`;
-
-    try {
-      const msgUser = makeUserMail({
-        to: body.email,
-        name: body.name,
-        reportUrl,
-        counselor,
-        spirUrl,
-        fallbackConsultUrl,
-        company_size: String(body.company_size),
-        company_name: body.company_name ?? null,
-        industry: body.industry ?? null,
-        age_range: body.age_range ?? null,
-      });
-      await sendMail(msgUser as any);
-    } catch (e) {
-      console.warn("[report-request] user mail failed:", e);
-    }
-
-    try {
-      const opsTo = process.env.MAIL_OPS_TO;
-      if (opsTo) {
-        const msgOps = makeOpsMail({
-          rid: body.rid,
-          name: body.name,
-          email: body.email,
-          reportUrl,
-          counselor,
-          spirUrl,
-          fallbackConsultUrl,
-          company_size: String(body.company_size),
-          company_name: body.company_name ?? null,
-          industry: body.industry ?? null,
-          age_range: body.age_range ?? null,
-        });
-        await sendMail(msgOps as any);
-      }
-    } catch (e) {
-      console.warn("[report-request] ops mail failed:", e);
-    }
-
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error("[report-request] fatal:", e);
-    return NextResponse.json({ ok: false, message: e?.message ?? "Bad Request" }, { status: 400 });
+    const json = await req.json();
+    payload = BodySchema.parse(json);
+  } catch {
+    return bad('Bad Request: diagId(uuid) が必要です', 400);
   }
+
+  // Supabase クライアント（型ジェネリクスは未使用なので外す）
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
+    global: { headers: { 'x-application-name': 'samurai-check' } },
+  });
+
+  // 診断レコード取得（実テーブル/カラム名に合わせてください）
+  const { data, error } = await supabase
+    .from('diagnoses')
+    .select('id, email, company_size, samurai_type, normalized_scores')
+    .eq('id', payload.diagId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[report-request] supabase error:', error);
+    return bad('Not Found: DB error', 500);
+  }
+  if (!data) return bad('Not Found: diagnosis not found', 404);
+  if (!data.email) return bad('Record has no email', 422);
+
+  const userName = data.email.split('@')[0];
+  const reportLink = `${PUBLIC_BASE_URL}/report/${data.id}`;
+
+  // メール本文生成（件名/HTML/Text/リンク類はテンプレ側で整備済み）
+  const mail = buildReportEmail({
+    userName,
+    samuraiType: data.samurai_type || undefined,
+    companySize: data.company_size || 'unknown',
+    reportLink,
+    consultLink: CONSULT_URL || undefined,
+    shareLink: SHARE_URL || undefined,
+    openChatLink: OPENCHAT_URL || undefined,
+    openChatQrSrc: OPENCHAT_QR || undefined,
+    utm: { source: 'email', medium: 'diagnosis', campaign: 'report' },
+    diagId: data.id,
+  });
+
+  // 送信スキップ（ドライラン）
+  if (dryRun) {
+    return ok({
+      ok: true,
+      dryRun: true,
+      to: data.email,
+      subject: mail.subject,
+      preview: mail.text?.slice(0, 120) ?? '',
+      reportLink,
+    });
+  }
+
+  // 送信（★ replyTo プロパティ名に注意。ハイフンは不可）
+  try {
+    await sendMail({
+      to: data.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+      replyTo: MAIL_REPLY_TO, // ← OK（/lib/mailer.ts が reply_to に変換）
+      tagId: data.id,
+    });
+  } catch (e: any) {
+    console.error('[report-request] sendMail error:', e);
+    return bad(`Send failed: ${e?.message || String(e)}`, 502);
+  }
+
+  return ok({ ok: true });
+}
+
+export async function OPTIONS() {
+  return ok({ ok: true });
 }

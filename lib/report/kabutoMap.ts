@@ -1,20 +1,13 @@
 // /lib/report/kabutoMap.ts
-export type SamuraiLabel =
-  | '真田幸村型'
-  | '斎藤道三型'
-  | '上杉謙信型'
-  | '徳川家康型'
-  | '豊臣秀吉型'
-  | '織田信長型'
-  | '今川義元型';
+import type { SamuraiType } from '@/types/diagnosis';
 
-// public/images/kabuto/*.svg を配置済み前提
-export const kabutoSrcByType: Record<SamuraiLabel, string> = {
-  '真田幸村型': '/images/kabuto/sanada.svg',
-  '斎藤道三型': '/images/kabuto/saito.svg',
-  '上杉謙信型': '/images/kabuto/uesugi.svg',
-  '徳川家康型': '/images/kabuto/tokugawa.svg',
-  '豊臣秀吉型': '/images/kabuto/toyotomi.svg',
-  '織田信長型': '/images/kabuto/oda.svg',
-  '今川義元型': '/images/kabuto/imagawa.svg',
+// public/images/kabuto/{surname}.svg を前提（姓ローマ字）
+export const KABUTO_SRC: Record<SamuraiType, { surname: string; src: string }> = {
+  '真田幸村型': { surname: 'sanada',   src: '/images/kabuto/sanada.svg' },
+  '織田信長型': { surname: 'oda',      src: '/images/kabuto/oda.svg' },
+  '豊臣秀吉型': { surname: 'toyotomi', src: '/images/kabuto/toyotomi.svg' },
+  '徳川家康型': { surname: 'tokugawa', src: '/images/kabuto/tokugawa.svg' },
+  '斎藤道三型': { surname: 'saito',    src: '/images/kabuto/saito.svg' },
+  '今川義元型': { surname: 'imagawa',  src: '/images/kabuto/imagawa.svg' },
+  '上杉謙信型': { surname: 'uesugi',   src: '/images/kabuto/uesugi.svg' },
 };

@@ -1,203 +1,258 @@
-// lib/scoringSystem.ts
-// スコア集計システム（質問ごとの上限 cap と重み weight 対応）
-// Q14(表示) ⇔ id:16 等のズレに対しても「相談窓口なし」減点が効くように実装
+// /lib/scoringSystem.ts
+// ============================================================
+// 秒速戦国チェック｜カテゴリ集計＆正規化ユーティリティ
+//  - 設問→カテゴリ紐づけ（2025-07-22時点の仕様準拠）
+//  - スコアマップ（テキスト => 点）注入式
+//  - 正規化モード（auto/fixedMax）/ カテゴリ重み / デバッグ詳細
+// ============================================================
 
-export interface CategoryScores {
-  "アップデート力": number;
-  "コミュ力誤差": number;
-  "ジェネギャップ感覚": number;
-  "組織進化阻害": number;
-  "無自覚ハラスメント傾向": number;
-  "権限委譲・構造健全度": number;
-}
+import type {
+  CategoryKey,
+  NormalizedCategoryScores,
+  RawCategoryScores,
+  ScorePattern,
+  QuestionId,
+} from '@/types/diagnosis';
 
-import { questionCategoryMap } from "@/lib/questionCategoryMap";
-import { quizQuestions } from "@/lib/quizQuestions";
-
-/**
- * 複数選択の“取り放題”歪み防止：設問ごとの合計に上限を掛ける。
- * A) 分解能アップのため、学習系の複数選択Qは cap=4 に微調整
- */
-const QUESTION_SCORE_CAPS: Record<string, number> = {
-  Q1: 3,
-  Q4: 3,
-  Q5: 4,  // ↑UP
-  Q6: 3,
-  Q8: 4,  // ↑UP
-  Q9: 4,  // ↑UP
-  Q12: 4, // ↑UP
-  Q13: 4, // ↑UP
+/* ===================== 設問→カテゴリの紐づけ ===================== */
+// 仕様メモ（2025-07-22）
+// Q1＝権限委譲・構造健全度
+// Q2＝組織進化阻害、無自覚ハラスメント傾向
+// Q3＝組織進化阻害
+// Q4＝コミュ力誤差
+// Q5＝アップデート力、ジェネギャップ感覚
+// Q6＝アップデート力、ジェネギャップ感覚
+// Q7＝アップデート力
+// Q8＝組織進化阻害、コミュ力誤差
+// Q9＝ジェネギャップ感覚、コミュ力誤差
+// Q10＝アップデート力
+// Q11＝組織進化阻害、無自覚ハラスメント傾向、権限委譲・構造健全度
+// Q12＝ジェネギャップ感覚、コミュ力誤差
+// Q13＝無自覚ハラスメント傾向、権限委譲・構造健全度
+// Q14＝権限委譲・構造健全度
+const MAPPING: Record<QuestionId, CategoryKey[]> = {
+  Q1:  ['delegation'],
+  Q2:  ['orgDrag', 'harassmentAwareness'],
+  Q3:  ['orgDrag'],
+  Q4:  ['commGap'],
+  Q5:  ['updatePower', 'genGap'],
+  Q6:  ['updatePower', 'genGap'],
+  Q7:  ['updatePower'],
+  Q8:  ['orgDrag', 'commGap'],
+  Q9:  ['genGap', 'commGap'],
+  Q10: ['updatePower'],
+  Q11: ['orgDrag', 'harassmentAwareness', 'delegation'],
+  Q12: ['genGap', 'commGap'],
+  Q13: ['harassmentAwareness', 'delegation'],
+  Q14: ['delegation'],
 };
 
-/**
- * 設問ごとの重み（分子＝実スコア、分母＝最大スコアの両方に適用）
- * B) 社長の意思系（Q2/Q10/Q14）をやや強調
- */
-const QUESTION_WEIGHTS: Record<string, number> = {
-  Q2: 1.15,
-  Q10: 1.15,
-  Q14: 1.25,
+/* ========================= 型と定数 ========================= */
+
+export type ScoreMap = Partial<Record<QuestionId, Record<string, number>>>;
+
+export type NormalizeMode =
+  | 'auto'      // 各カテゴリの「設問数×maxPerQuestion」で自動上限
+  | 'fixedMax'; // カテゴリごとに固定上限を明示（上級者向け）
+
+export type ScoringOptions = {
+  // 正規化の方式
+  normalizeMode?: NormalizeMode;
+  // 設問1つあたりの理論上限点（通常3）
+  maxPerQuestion?: number;
+  // fixedMax時のカテゴリ別上限（未指定カテゴリはauto算出にフォールバック）
+  fixedMaxByCategory?: Partial<Record<CategoryKey, number>>;
+  // カテゴリ重み（1.0がデフォルト）※重みを掛けた後で0〜3に丸めます
+  weights?: Partial<Record<CategoryKey, number>>;
+  // 小数丸めの桁（デフォルト＝小数1桁）
+  roundDigits?: number;
 };
 
-const getQuestionWeight = (qKey: string) =>
-  typeof QUESTION_WEIGHTS[qKey] === "number" ? QUESTION_WEIGHTS[qKey] : 1;
+export type ScoreDetailRow = {
+  qid: QuestionId;
+  answerText: string;
+  score: number;
+  contributes: CategoryKey[]; // どのカテゴリに寄与したか
+};
 
-/** 設問の“最大得点”を取得（capがあれば cap、なければ選択肢最大） */
-function getPerQuestionMaxScore(qKey: string, optionScores: number[]): number {
-  const cap = QUESTION_SCORE_CAPS[qKey];
-  const maxOption = optionScores.length ? Math.max(...optionScores) : 0;
-  return typeof cap === "number" ? cap : maxOption;
-}
+export type ScoringResult = {
+  raw: RawCategoryScores;
+  normalized: NormalizedCategoryScores;
+  details: ScoreDetailRow[]; // デバッグ/可視化用
+};
 
-/* ===== 「相談窓口なし」を選んだら 1 点減点（排他にしない） =====
- * - 表示Q14でも内部idが異なる場合に備え、キー/文言の両方で判定
- * - 減点は合計→cap→weight の「合計」の段階で適用（下限0）
- */
-const PENALTY_QUESTION_KEYS = new Set(["Q14", "Q16"]); // 将来ズレ対策
-const PENALTY_QUESTION_TEXT_KEYS = ["ハラスメント相談窓口", "相談窓口"]; // 文言でも拾う
-const NO_WINDOW_WORDS = [
-  "そういう相談窓口は設置していない",
-  "窓口は設置していない",
-  "相談窓口を設置していない",
+/* ========================= ユーティリティ ========================= */
+
+const ALL_CATEGORIES: CategoryKey[] = [
+  'delegation',
+  'orgDrag',
+  'commGap',
+  'updatePower',
+  'genGap',
+  'harassmentAwareness',
 ];
 
-/** カテゴリ別の最大スコア（正規化の分母）を計算：cap＆weight 反映版 */
-export function calculateMaxScoresPerCategory(): CategoryScores {
-  const maxScores: CategoryScores = {
-    "アップデート力": 0,
-    "コミュ力誤差": 0,
-    "ジェネギャップ感覚": 0,
-    "組織進化阻害": 0,
-    "無自覚ハラスメント傾向": 0,
-    "権限委譲・構造健全度": 0,
+function makeEmptyRaw(): RawCategoryScores {
+  return {
+    delegation: 0,
+    orgDrag: 0,
+    commGap: 0,
+    updatePower: 0,
+    genGap: 0,
+    harassmentAwareness: 0,
   };
-
-  quizQuestions.forEach((question) => {
-    const qKey = `Q${question.id}`;
-    const cats = questionCategoryMap[qKey];
-    if (!cats || cats.length === 0) return;
-
-    const optionScores = question.options.map((o) => o.score);
-    const qMax = getPerQuestionMaxScore(qKey, optionScores);
-    const w = getQuestionWeight(qKey);
-    const weightedMax = qMax * w;
-
-    const perCat = weightedMax / cats.length;
-    cats.forEach((cat) => {
-      if (cat in maxScores) {
-        maxScores[cat as keyof CategoryScores] += perCat;
-      }
-    });
-  });
-
-  return maxScores;
 }
 
-/** 実スコア（cap＆weight適用）→ カテゴリ配分 → 0〜3に正規化 */
+export function getMapping(): Readonly<Record<QuestionId, CategoryKey[]>> {
+  return MAPPING;
+}
+
+export function countQuestionsByCategory(cat: CategoryKey): number {
+  let n = 0;
+  (Object.keys(MAPPING) as QuestionId[]).forEach((qid) => {
+    if (MAPPING[qid].includes(cat)) n += 1;
+  });
+  return n;
+}
+
+/** 小数丸めユーティリティ */
+function roundTo(value: number, digits: number): number {
+  const p = Math.pow(10, digits);
+  return Math.round(value * p) / p;
+}
+
+/* ========================= バリデーション ========================= */
+
+/**
+ * パターン上の未知QIDや空文字回答を検出（致命傷ではないが警告用）
+ */
+export function validatePattern(pattern: ScorePattern): {
+  unknownQids: string[];
+  emptyAnswers: QuestionId[];
+} {
+  const unknownQids: string[] = [];
+  const emptyAnswers: QuestionId[] = [];
+
+  Object.entries(pattern).forEach(([qid, answer]) => {
+    if (!(qid as QuestionId in MAPPING)) unknownQids.push(qid);
+    if (!String(answer ?? '').trim()) emptyAnswers.push(qid as QuestionId);
+  });
+
+  return { unknownQids, emptyAnswers };
+}
+
+/* ========================= コア計算 ========================= */
+
+/**
+ * 選択肢テキスト(ScorePattern)と scoreMap からRawと正規化スコアを算出
+ * - normalizeMode='auto'：上限=「設問数×maxPerQuestion」
+ * - normalizeMode='fixedMax'：fixedMaxByCategoryを優先、未指定はauto計算
+ * - weights：カテゴリ別重み（1.0を基準、>1で強調、<1で抑制）
+ */
 export function calculateCategoryScores(
-  responses: { questionId: number; selectedAnswers: string[] }[]
-): CategoryScores {
-  const categorySums: CategoryScores = {
-    "アップデート力": 0,
-    "コミュ力誤差": 0,
-    "ジェネギャップ感覚": 0,
-    "組織進化阻害": 0,
-    "無自覚ハラスメント傾向": 0,
-    "権限委譲・構造健全度": 0,
-  };
+  pattern: ScorePattern,
+  scoreMap: ScoreMap,
+  options: ScoringOptions = {},
+): ScoringResult {
+  const {
+    normalizeMode = 'auto',
+    maxPerQuestion = 3,
+    fixedMaxByCategory = {},
+    weights = {},
+    roundDigits = 1,
+  } = options;
 
-  responses.forEach(({ questionId, selectedAnswers }) => {
-    const qKey = `Q${questionId}`;
-    const cats = questionCategoryMap[qKey];
-    if (!cats || cats.length === 0) return;
+  const raw = makeEmptyRaw();
+  const details: ScoreDetailRow[] = [];
 
-    // 安全網：「該当するものはない」が他と混在したらそれだけ残す
-    const none = selectedAnswers.find((a) => a === "該当するものはない");
-    if (none && selectedAnswers.length > 1) selectedAnswers = [none];
+  // 1) 生スコア集計
+  (Object.keys(pattern) as QuestionId[]).forEach((qid) => {
+    const answerText = pattern[qid];
+    const map = scoreMap[qid] || {};
+    const score = map[answerText] ?? 0;
 
-    const q = quizQuestions.find((qq) => qq.id === questionId);
-    if (!q) return;
-
-    // 設問の cap / weight
-    const optionScores = q.options.map((o) => o.score);
-    const qMax = getPerQuestionMaxScore(qKey, optionScores);
-    const w = getQuestionWeight(qKey);
-
-    // 合計
-    let total = 0;
-    selectedAnswers.forEach((sel) => {
-      const opt = q.options.find((o) => o.text === sel);
-      if (opt) total += opt.score;
-    });
-
-    // ===== 「相談窓口なし」減点（排他にしない） =====
-    const isPenaltyQuestion =
-      PENALTY_QUESTION_KEYS.has(qKey) ||
-      PENALTY_QUESTION_TEXT_KEYS.some((k) =>
-        (q?.questionText || "").includes(k)
-      );
-
-    const hasNoWindow = (selectedAnswers || []).some((s) =>
-      NO_WINDOW_WORDS.some((w) => s.includes(w))
-    );
-
-    if (isPenaltyQuestion && hasNoWindow) {
-      const before = total;
-      total = Math.max(0, total - 1); // 下限0で1点減点
-      if (process.env.NODE_ENV !== "production") {
-        console.log(
-          `Penalty applied on ${qKey}: ${before} -> ${total} (窓口なし)`
-        );
-      }
-    }
-    // ==============================================
-
-    // cap → weight
-    const capped = Math.min(total, qMax);
-    const weighted = capped * w;
-
-    // カテゴリ配分
-    const perCat = weighted / cats.length;
+    // 設問→カテゴリへ加算
+    const cats = MAPPING[qid];
     cats.forEach((cat) => {
-      if (cat in categorySums) {
-        categorySums[cat as keyof CategoryScores] += perCat;
-      }
+      raw[cat] += score;
     });
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log(
-        `Q${questionId}: raw=${total}, cap=${qMax}, weight=${w}, used=${weighted}, cats=${cats}`
-      );
+    details.push({
+      qid,
+      answerText,
+      score,
+      contributes: cats,
+    });
+  });
+
+  // 2) 正規化上限の算出
+  const upperAuto: Record<CategoryKey, number> = {} as any;
+  ALL_CATEGORIES.forEach((cat) => {
+    upperAuto[cat] = countQuestionsByCategory(cat) * maxPerQuestion;
+  });
+
+  const upperFinal: Record<CategoryKey, number> = {} as any;
+  ALL_CATEGORIES.forEach((cat) => {
+    if (normalizeMode === 'fixedMax' && fixedMaxByCategory[cat] && fixedMaxByCategory[cat]! > 0) {
+      upperFinal[cat] = fixedMaxByCategory[cat]!;
+    } else {
+      upperFinal[cat] = upperAuto[cat];
     }
+    // 安全策：万一0なら1にして0割防止
+    if (!upperFinal[cat] || upperFinal[cat] <= 0) upperFinal[cat] = 1;
   });
 
-  // 正規化（0〜3）
-  const maxScores = calculateMaxScoresPerCategory();
-  const normalized: CategoryScores = {
-    "アップデート力": 0,
-    "コミュ力誤差": 0,
-    "ジェネギャップ感覚": 0,
-    "組織進化阻害": 0,
-    "無自覚ハラスメント傾向": 0,
-    "権限委譲・構造健全度": 0,
+  // 3) 重み付け＆0〜3正規化
+  const normalized: Record<CategoryKey, number> = {} as any;
+  ALL_CATEGORIES.forEach((cat) => {
+    const w = weights[cat] ?? 1.0;
+    const weighted = raw[cat] * w;
+    // 0..3へスケール
+    const v = Math.max(0, Math.min(3, (weighted / upperFinal[cat]) * 3));
+    normalized[cat] = roundTo(v, roundDigits);
+  });
+
+  return {
+    raw: raw as RawCategoryScores,
+    normalized: normalized as NormalizedCategoryScores,
+    details,
   };
-
-  (Object.keys(normalized) as (keyof CategoryScores)[]).forEach((k) => {
-    const total = categorySums[k];
-    const max = maxScores[k];
-    const v = max > 0 ? (total / max) * 3 : 0;
-    normalized[k] = parseFloat(v.toFixed(2));
-  });
-
-  if (process.env.NODE_ENV !== "production") {
-    console.log("カテゴリ別合計:", categorySums);
-    console.log("カテゴリ別最大:", maxScores);
-    console.log("カテゴリ別正規化:", normalized);
-  }
-
-  return normalized;
 }
 
-export function debugScoreCalculation(responses: any[]): void {
-  console.log("スコア計算デバッグ:", responses);
+/* ========================= おまけ（可視化支援） ========================= */
+
+/**
+ * レーダーチャート用データ（ラベル付き）を生成
+ * - labelMap: 表示名（未指定時はカテゴリキーをそのまま）
+ */
+export function toRadarData(
+  normalized: NormalizedCategoryScores,
+  labelMap?: Partial<Record<CategoryKey, string>>,
+): Array<{ category: string; value: number; fullMark: number }> {
+  return ALL_CATEGORIES.map((cat) => ({
+    category: labelMap?.[cat] ?? cat,
+    value: normalized[cat],
+    fullMark: 3,
+  }));
+}
+
+/**
+ * デバッグ用：各カテゴリの理論上限テーブルを返す
+ */
+export function getCategoryCeilTable(
+  mode: NormalizeMode = 'auto',
+  maxPerQuestion = 3,
+  fixedMaxByCategory: Partial<Record<CategoryKey, number>> = {},
+): Record<CategoryKey, number> {
+  const upper: Record<CategoryKey, number> = {} as any;
+  ALL_CATEGORIES.forEach((cat) => {
+    const auto = countQuestionsByCategory(cat) * maxPerQuestion;
+    if (mode === 'fixedMax' && fixedMaxByCategory[cat] && fixedMaxByCategory[cat]! > 0) {
+      upper[cat] = fixedMaxByCategory[cat]!;
+    } else {
+      upper[cat] = auto;
+    }
+    if (!upper[cat] || upper[cat] <= 0) upper[cat] = 1;
+  });
+  return upper;
 }

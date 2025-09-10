@@ -1,74 +1,146 @@
-// app/report/page.tsx
-import { notFound } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-import ReportTemplate, { type ReportInput } from "@/components/report/ReportTemplate";
-import { readSnapshot } from "@/lib/scoreSnapshot";
+// /app/report/page.tsx
+import { notFound } from 'next/navigation';
+import ReportTemplate from '@/components/report/ReportTemplate';
+import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
+import { z } from 'zod';
+import { createClient } from '@supabase/supabase-js';
+import { TYPE_CONTENTS } from '@/lib/report/typeContents'; // 型別テキスト集（既存）
+import { judgeSamurai } from '@/lib/samuraiJudge';         // samurai_type欠損時の保険
 
-export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-type PageProps = { searchParams?: Record<string, string | string[] | undefined> };
+// --- 型＆バリデーション ---
+const SamuraiTypeEnum = z.enum([
+  '真田幸村型',
+  '今川義元型',
+  '斎藤道三型',
+  '織田信長型',
+  '豊臣秀吉型',
+  '徳川家康型',
+  '上杉謙信型',
+]);
 
-function envOrThrow(...names: string[]) {
-  for (const n of names) {
-    const v = process.env[n];
-    if (v) return v;
+const ScoresSchema = z.object({
+  delegation: z.number().min(0).max(3),
+  orgDrag: z.number().min(0).max(3),
+  commGap: z.number().min(0).max(3),
+  updatePower: z.number().min(0).max(3),
+  genGap: z.number().min(0).max(3),
+  harassmentAwareness: z.number().min(0).max(3),
+}) satisfies z.ZodType<NormalizedCategoryScores>;
+
+const ParamsSchema = z.object({
+  id: z.string().uuid().optional(),
+  samuraiType: SamuraiTypeEnum.optional(),
+  scores: z.string().optional(), // JSON.stringify(NormalizedCategoryScores)
+});
+
+type PageProps = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+// --- ユーティリティ ---
+function parseScoresJson(json?: string): NormalizedCategoryScores | undefined {
+  if (!json) return undefined;
+  try {
+    const raw = JSON.parse(json);
+    const parsed = ScoresSchema.parse(raw);
+    return parsed;
+  } catch {
+    return undefined;
   }
-  throw new Error(`Missing env: ${names.join(" or ")}`);
 }
 
-const supabase = createClient(
-  envOrThrow("NEXT_PUBLIC_SUPABASE_URL"),
-  // 読み取り専用：ANON優先／なければSERVICE_ROLEでも可（サーバ実行のため）
-  envOrThrow("NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
-  { auth: { persistSession: false } }
-);
+async function fetchFromSupabase(id: string) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!supabaseUrl || !anonKey) {
+    return { id: undefined as string | undefined, company_size: undefined as string | undefined, type: undefined as SamuraiType | undefined, scores: undefined as NormalizedCategoryScores | undefined };
+  }
 
-// rid / resultId / id のいずれかから拾う
-function pickRid(sp?: PageProps["searchParams"]): string {
-  const val =
-    (typeof sp?.rid === "string" && sp?.rid) ||
-    (typeof sp?.resultId === "string" && sp?.resultId) ||
-    (typeof sp?.id === "string" && sp?.id) ||
-    "";
-  return val.trim();
-}
-
-export default async function Page({ searchParams }: PageProps) {
-  const rid = pickRid(searchParams);
-  if (!rid) notFound();
-
-  // 1) 結果行だけ取得（計算はしない）
-  const { data: row, error } = await supabase
-    .from("samurairesults")
-    .select("*")
-    .eq("id", rid)
+  const supabase = createClient(supabaseUrl, anonKey);
+  const { data, error } = await supabase
+    .from('diagnoses')
+    .select('id, company_size, samurai_type, normalized_scores')
+    .eq('id', id)
+    .limit(1)
     .maybeSingle();
 
-  if (error || !row) notFound();
+  if (error || !data) {
+    return { id: undefined, company_size: undefined, type: undefined, scores: undefined };
+  }
 
-  // 2) 保存済みスナップショットを利用（なければ旧カラムから復元）
-  const snap = readSnapshot(row);
+  const type = SamuraiTypeEnum.safeParse(data.samurai_type).success
+    ? (data.samurai_type as SamuraiType)
+    : undefined;
 
-  const samuraiType =
-    snap.samuraiTypeJa ??
-    snap.samuraiTypeKey ??
-    (typeof (row as any).samurai_type === "string" ? (row as any).samurai_type : "");
+  let scores: NormalizedCategoryScores | undefined;
+  try {
+    scores = ScoresSchema.parse(data.normalized_scores);
+  } catch {
+    scores = undefined;
+  }
 
-  // 3) テンプレに渡すデータ
-  const data: ReportInput = {
-    resultId: rid,
-    samuraiType,
-    categories: snap.categories,
-    flags: {
-      manyZeroOnQ5: !!(row as any).flag_manyZeroOnQ5,
-      noRightHand: !!(row as any).flag_noRightHand,
-    },
-    personalComments: undefined,
-    companySize:
-      typeof (row as any).company_size === "number"
-        ? String((row as any).company_size)
-        : ((row as any).company_size ?? ""),
-  };
+  return { id: data.id as string, company_size: (data.company_size as string | undefined) ?? 'unknown', type, scores };
+}
 
-  return <ReportTemplate data={data} />;
+// --- ページ本体 ---
+export default async function ReportPage({ searchParams }: PageProps) {
+  // 1) クエリの正規化
+  const params = ParamsSchema.safeParse(
+    Object.fromEntries(
+      Object.entries(searchParams ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
+    ),
+  );
+  if (!params.success) return notFound();
+
+  let diagId: string | undefined;
+  let companySize: string | undefined;
+  let samuraiType: SamuraiType | undefined;
+  let normalizedScores: NormalizedCategoryScores | undefined;
+
+  // 2) DB優先で取得
+  if (params.data.id) {
+    const { id, company_size, type, scores } = await fetchFromSupabase(params.data.id);
+    diagId = id ?? diagId;
+    companySize = company_size ?? companySize;
+    samuraiType = type ?? samuraiType;
+    normalizedScores = scores ?? normalizedScores;
+  }
+
+  // 3) フォールバック（クエリ直指定）
+  if (!samuraiType && params.data.samuraiType) samuraiType = params.data.samuraiType;
+  if (!normalizedScores && params.data.scores) normalizedScores = parseScoresJson(params.data.scores);
+
+  // samurai_type が無い場合はスコアから判定
+  if (!samuraiType && normalizedScores) samuraiType = judgeSamurai(normalizedScores);
+
+  // 4) 最終チェック
+  if (!samuraiType || !normalizedScores) return notFound();
+
+  // 型別本文（既存 typeContents を使用・文言改変なし）
+  const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[samuraiType];
+  if (!content) return notFound();
+
+  // 5) レンダリング（ReportTemplate の“フル装備版” Props をすべて供給）
+  return (
+    <main className="container py-6">
+      <ReportTemplate
+        diagId={diagId ?? 'N/A'}
+        samuraiType={samuraiType}
+        normalizedScores={normalizedScores}
+        companySize={companySize ?? 'unknown'}
+        content={content}
+        // personalization は [rid] 版で注入しているのでここでは省略可（ReportBody 側でフォールバック動作）
+        openChat={{
+          qrSrc: process.env.NEXT_PUBLIC_OPENCHAT_QR ?? undefined,
+          linkHref: process.env.NEXT_PUBLIC_OPENCHAT_URL ?? undefined,
+        }}
+        brandLogoSrc="/images/iot-logo.svg"
+        brandSiteUrl="https://ourdx-mtg.com/"
+        shareUrl={process.env.NEXT_PUBLIC_SHARE_URL ?? '#'}
+        consultUrl={process.env.NEXT_PUBLIC_CONSULT_URL ?? '#'}
+      />
+    </main>
+  );
 }

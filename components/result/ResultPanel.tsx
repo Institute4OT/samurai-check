@@ -1,54 +1,43 @@
 // components/result/ResultPanel.tsx
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ShareModal from '@/components/common/ShareModal';
 import { Share2 } from 'lucide-react';
 import FinalizeOnMount from '@/components/result/FinalizeOnMount';
-import {
-  normalizeToCatArray,
-  resolveSamuraiType,
-  getEmojiLabel,
-} from '@/lib/result/normalize';
+import { normalizeToCatArray, resolveSamuraiType, getEmojiLabel } from '@/lib/result/normalize';
 import { samuraiDescriptions } from '@/lib/samuraiJudge';
-
-// 診断IDバッジ＆RID同期
 import IdBadge from '@/components/result/IdBadge';
 import RidSync from '@/components/rid/RidSync';
 
 /* ========= ユーティリティ ========= */
 
-/** UUID / ULID / NanoID(16+英数) をざっくり許容 */
+// UUID / ULID / NanoID(16+英数) をざっくり許容
 function isIdish(v?: string | null) {
   if (!v) return false;
   const s = String(v).trim();
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/; // Crockford base32
-  const nano = /^[a-zA-Z0-9_-]{16,}$/;     // 16文字以上の英数-_ を許容
+  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;       // Crockford base32
+  const nano = /^[a-zA-Z0-9_-]{16,}$/;           // 16文字以上の英数-_ を許容
   return uuid.test(s) || ulid.test(s) || nano.test(s);
 }
 
-/** URL から rid を拾う（?rid= / ?resultId= / パス断片の両対応） */
+// URL から rid を拾う（?rid= / ?resultId= / パス断片の両対応）
 function pickRidFromLocation(): string | null {
   if (typeof window === 'undefined') return null;
   try {
     const url = new URL(window.location.href);
-    // 1) よくあるキー名を順に探索
-    const keys = ['rid', 'resultId', 'resultid', 'id'];
-    for (const k of keys) {
+    for (const k of ['rid', 'resultId', 'resultid', 'id']) {
       const v = url.searchParams.get(k);
       if (isIdish(v)) return String(v);
     }
-    // 2) パス断片から後ろ向きに探索
     const segs = url.pathname.split('/').filter(Boolean);
     for (let i = segs.length - 1; i >= 0; i--) {
       const p = decodeURIComponent(segs[i] || '');
       if (isIdish(p)) return p;
     }
-  } catch {
-    // noop
-  }
+  } catch {}
   return null;
 }
 
@@ -59,7 +48,7 @@ type Props = {
   samuraiType: string | null;
   comments: { strengths: string[]; tips: string[] };
   onRestart: () => void;
-  /** Finalize に渡す回答スナップショット（Q→選択肢の配列） */
+  /** Finalize に渡す回答スナップショット（Q1→選択肢…） */
   scorePattern?: Record<string, string[]> | null;
 };
 
@@ -72,16 +61,34 @@ export default function ResultPanel({
   onRestart,
   scorePattern,
 }: Props) {
-  // ridを props → URL の順で堅牢に解決
-  const ridResolved = useMemo<string>(() => {
+  // rid を props/URL から解決。URL更新（Finalize後）にも追従させる
+  const [ridResolved, setRidResolved] = useState<string>(() => {
     if (isIdish(rid)) return String(rid);
     const fromUrl = pickRidFromLocation();
     return fromUrl ?? '';
+  });
+  useEffect(() => {
+    if (isIdish(rid)) {
+      setRidResolved(String(rid));
+      return;
+    }
+    // 初回/Finalize後のURL書換えにも追従
+    const tryUpdate = () => {
+      const v = pickRidFromLocation();
+      if (isIdish(v)) setRidResolved(v!);
+    };
+    tryUpdate();
+    const t = setTimeout(tryUpdate, 300); // Finalize→URL反映の後追いを一回
+    window.addEventListener('popstate', tryUpdate);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('popstate', tryUpdate);
+    };
   }, [rid]);
 
   const categoriesFixed = useMemo(() => normalizeToCatArray(finalScores), [finalScores]);
-  const typeResolved = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
-  const displayName = typeResolved.display || samuraiType || '武将';
+  const typeResolved   = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
+  const displayName    = typeResolved.display || samuraiType || '武将';
 
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -91,13 +98,14 @@ export default function ResultPanel({
       {isIdish(ridResolved) && <RidSync rid={ridResolved} />}
 
       {/* DBスナップショット確定（UI非表示）
-          ※ rid が空でも Finalize 側で新規発行できるので、カテゴリが揃っていれば実行 */}
+          → rid が空でも FinalizeOnMount 側で発行・URL同期するので実行 */}
       {categoriesFixed.length > 0 && (
         <FinalizeOnMount
           rid={ridResolved}
           samuraiTypeKey={typeResolved.key}
           samuraiTypeJa={typeResolved.ja}
           categories={categoriesFixed.map((c) => ({ key: c.key, score: c.score }))}
+          /* ← ここは DB の snake_case に合わせて入れる */
           scorePattern={scorePattern ?? null}
         />
       )}
@@ -106,7 +114,9 @@ export default function ResultPanel({
 
       {!!displayName && (
         <div className="mb-6 p-6 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-200 rounded-lg">
-          <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-3">{displayName}</h1>
+          <h1 className="text-4xl md:text-5xl font-bold text-red-700 mb-3">
+            {displayName}
+          </h1>
 
           {/* 診断IDバッジ（コピー可） */}
           {isIdish(ridResolved) && (
@@ -141,16 +151,14 @@ export default function ResultPanel({
         {categoriesFixed.map(({ key, label, score }) => {
           const emojiLabel = getEmojiLabel(score);
           const color =
-            score >= 2.5 ? 'text-green-600' :
-            score >= 2.0 ? 'text-yellow-600' :
-            'text-red-600';
+            score >= 2.5 ? 'text-green-600'
+            : score >= 2.0 ? 'text-yellow-600'
+            : 'text-red-600';
           return (
             <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="font-medium">{label}</span>
               <div className="flex items-center">
-                <span className={`text-lg font-bold ${color}`}>
-                  {Math.min(score, 3).toFixed(2)}点
-                </span>
+                <span className={`text-lg font-bold ${color}`}>{Math.min(score, 3).toFixed(2)}点</span>
                 <span className="text-sm font-medium text-gray-800 ml-2">{emojiLabel}</span>
               </div>
             </div>
@@ -216,9 +224,7 @@ export default function ResultPanel({
           src="/images/logo.png"
           alt="企業の未来づくり研究所ロゴ"
           className="w-[40px] h-auto opacity-70 hover:opacity-90"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.visibility = 'hidden';
-          }}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
         />
         <span>© 一般社団法人 企業の未来づくり研究所</span>
       </a>

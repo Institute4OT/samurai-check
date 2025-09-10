@@ -1,56 +1,87 @@
-// app/report/[rid]/page.tsx
-import { notFound } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-import ReportTemplate, { type ReportInput } from "@/components/report/ReportTemplate";
-import { readSnapshot } from "@/lib/scoreSnapshot";
+// /app/report/[rid]/page.tsx
+import { notFound } from 'next/navigation';
+import { z } from 'zod';
+import { createClient } from '@supabase/supabase-js';
+import ReportTemplate from '@/components/report/ReportTemplate';
+import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
+import { judgeSamurai } from '@/lib/samuraiJudge';
+import { TYPE_CONTENTS } from '@/lib/report/typeContents';
+import { getPersonalizedComments } from '@/lib/report/personalization';
 
-export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const Rid = z.string().uuid();
+const ScoresSchema = z.object({
+  delegation: z.number().min(0).max(3),
+  orgDrag: z.number().min(0).max(3),
+  commGap: z.number().min(0).max(3),
+  updatePower: z.number().min(0).max(3),
+  genGap: z.number().min(0).max(3),
+  harassmentAwareness: z.number().min(0).max(3),
+}) satisfies z.ZodType<NormalizedCategoryScores>;
 
 type PageProps = { params: { rid: string } };
 
-function envOrThrow(...names: string[]) {
-  for (const n of names) {
-    const v = process.env[n];
-    if (v) return v;
-  }
-  throw new Error(`Missing env: ${names.join(" or ")}`);
-}
+export default async function ReportPage({ params }: PageProps) {
+  const rid = Rid.safeParse(params.rid);
+  if (!rid.success) return notFound();
 
-const supabase = createClient(
-  envOrThrow("NEXT_PUBLIC_SUPABASE_URL"),
-  envOrThrow("NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
-  { auth: { persistSession: false } }
-);
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  );
 
-export default async function Page({ params }: PageProps) {
-  const rid = decodeURIComponent(params.rid || "").trim();
-  if (!rid) notFound();
+  const { data, error } = await supabase
+    .from('diagnoses')
+    .select('id, company_size, normalized_scores, samurai_type, score_pattern')
+    .eq('id', rid.data)
+    .limit(1)
+    .maybeSingle();
 
-  const { data: row, error } = await supabase
-    .from("samurairesults")
-    .select("*")
-    .eq("id", rid)
-    .single();
+  if (error || !data) return notFound();
 
-  if (error || !row) notFound();
+  const scores = ScoresSchema.safeParse(data.normalized_scores).success
+    ? (data.normalized_scores as NormalizedCategoryScores)
+    : undefined;
 
-  const snap = readSnapshot(row);
-  const samuraiType =
-    snap.samuraiTypeJa ??
-    snap.samuraiTypeKey ??
-    (typeof row.samurai_type === "string" ? row.samurai_type : "");
+  let samuraiType: SamuraiType | undefined =
+    (typeof data.samurai_type === 'string' && data.samurai_type) ? (data.samurai_type as SamuraiType) : undefined;
 
-  const data: ReportInput = {
-    resultId: rid,
-    samuraiType,
-    categories: snap.categories,
-    flags: {
-      manyZeroOnQ5: !!row.flag_manyZeroOnQ5,
-      noRightHand: !!row.flag_noRightHand,
-    },
-    personalComments: undefined,
-    companySize: typeof row.company_size === "number" ? String(row.company_size) : (row.company_size ?? ""),
+  if (!scores) return notFound();
+  if (!samuraiType) samuraiType = judgeSamurai(scores);
+
+  const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[samuraiType];
+  if (!content) return notFound();
+
+  // ★ 個別コメント（gifts/challenges）の生成
+  // scoreMap を持っている場合は import して渡してください（任意）
+  const personal = getPersonalizedComments({
+    scorePattern: data.score_pattern ?? {},
+    normalizedScores: scores,
+    // scoreMap, // 例：import { SCORE_MAP } from '@/lib/report/categoryNormalize' 等
+    maxItems: 2,
+  });
+
+  const openChat = {
+    qrSrc: process.env.NEXT_PUBLIC_OPENCHAT_QR ?? undefined,
+    linkHref: process.env.NEXT_PUBLIC_OPENCHAT_URL ?? undefined,
   };
 
-  return <ReportTemplate data={data} />;
+  return (
+    <main className="container py-6">
+      <ReportTemplate
+        diagId={data.id}
+        samuraiType={samuraiType}
+        normalizedScores={scores}
+        companySize={data.company_size ?? 'unknown'}
+        content={content}
+        personal={personal}           // ← ここで注入
+        openChat={openChat}
+        brandLogoSrc="/images/iot-logo.svg"
+        brandSiteUrl="https://ourdx-mtg.com/"
+        shareUrl={process.env.NEXT_PUBLIC_SHARE_URL ?? '#'}
+        consultUrl={process.env.NEXT_PUBLIC_CONSULT_URL ?? '#'}
+      />
+    </main>
+  );
 }
