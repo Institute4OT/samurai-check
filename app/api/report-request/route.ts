@@ -1,130 +1,87 @@
-// /app/api/report-request/route.ts
-// ============================================================
-// 「武将タイプ診断」詳細レポート送信API（最終版・エラー解消）
-// - POST: { diagId: string(UUID) }
-// - Supabaseから診断レコード取得 → emailTemplate生成 → Resend送信
-// - ?dry=1 でドライラン（送信しない）
-// ============================================================
+// app/api/report-request/route.ts
+/* eslint-disable no-console */
+import { NextRequest, NextResponse } from 'next/server';
+import { buildReportEmail } from '@/lib/emailTemplates';
+import { sendMail } from '@/lib/mail';
 
-export const runtime = 'nodejs'; // ★ ResendはNodeランタイム推奨
+type ReportEmailInput = Parameters<typeof buildReportEmail>[0];
 
-import { NextResponse, NextRequest } from 'next/server';
-import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
-import { buildReportEmail } from '@/lib/emailTemplates'; // ← プロジェクトの実ファイル名/パスに合わせて
-import sendMail from '@/lib/mail';
+export const runtime = 'nodejs';
 
-// ---------- 環境変数 ----------
-const PUBLIC_BASE_URL =
-  process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-
-const OPENCHAT_URL = process.env.NEXT_PUBLIC_OPENCHAT_URL || '';
-const OPENCHAT_QR = process.env.NEXT_PUBLIC_OPENCHAT_QR || '';
-const SHARE_URL = process.env.NEXT_PUBLIC_SHARE_URL || '';
-const CONSULT_URL = process.env.NEXT_PUBLIC_CONSULT_URL || '';
-const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || undefined;
-
-// Supabase（読み取りのみなら ANON でOK）
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-if (!SUPABASE_URL || !SUPABASE_ANON) {
-  console.warn(
-    '[report-request] NEXT_PUBLIC_SUPABASE_URL / ANON_KEY が未設定です'
-  );
-}
-
-// ---------- 入力スキーマ ----------
-const BodySchema = z.object({
-  diagId: z.string().uuid(),
-});
-
-// ---------- 便利レスポンス ----------
-const ok = (json: any, status = 200) =>
-  NextResponse.json(json, { status });
-const bad = (msg: string, status = 400) =>
-  NextResponse.json({ ok: false, error: msg }, { status });
-
-// ---------- ハンドラ ----------
 export async function POST(req: NextRequest) {
-  const dryRun = req.nextUrl.searchParams.get('dry') === '1';
-
-  // 入力パース
-  let payload: z.infer<typeof BodySchema>;
   try {
-    const json = await req.json();
-    payload = BodySchema.parse(json);
-  } catch {
-    return bad('Bad Request: diagId(uuid) が必要です', 400);
-  }
+    const data = (await req.json()) ?? {};
 
-  // Supabase クライアント（型ジェネリクスは未使用なので外す）
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
-    global: { headers: { 'x-application-name': 'samurai-check' } },
-  });
+    // 基本情報
+    const email: string = (data.email ?? '').toString();
+    const toNameBase: string =
+      (data.userName ?? data.toName ?? data.recipientName ?? email.split('@')[0] ?? '').toString();
+    const toName = toNameBase || 'お客様';
 
-  // 診断レコード取得（実テーブル/カラム名に合わせてください）
-  const { data, error } = await supabase
-    .from('diagnoses')
-    .select('id, email, company_size, samurai_type, normalized_scores')
-    .eq('id', payload.diagId)
-    .limit(1)
-    .maybeSingle();
+    // タイプ／会社規模（既存のキー名ゆらぎを吸収）
+    const samuraiType: string =
+      (data.samuraiType ?? data.samurai_type ?? data.type ?? 'unknown').toString();
+    const companySize: string =
+      (data.companySize ?? data.company_size ?? 'unknown').toString();
 
-  if (error) {
-    console.error('[report-request] supabase error:', error);
-    return bad('Not Found: DB error', 500);
-  }
-  if (!data) return bad('Not Found: diagnosis not found', 404);
-  if (!data.email) return bad('Record has no email', 422);
+    // 各URL（無ければフォールバック）
+    const reportLink: string =
+      (data.reportLink ?? data.reportUrl ?? '').toString() ||
+      'https://example.com/report';
+    const consultLink: string =
+      (data.consultLink ?? data.bookingUrl ?? '').toString() ||
+      'https://example.com/consult';
 
-  const userName = data.email.split('@')[0];
-  const reportLink = `${PUBLIC_BASE_URL}/report/${data.id}`;
+    // 任意パラメータ（存在すればテンプレに渡す）
+    const shareLink = data.shareLink;
+    const openChatLink = data.openChatLink;
+    const openChatQrSrc = data.openChatQrSrc;
+    const utm = data.utm;
+    const diagId = data.diagId;
 
-  // メール本文生成（件名/HTML/Text/リンク類はテンプレ側で整備済み）
-  const mail = buildReportEmail({
-    userName,
-    samuraiType: data.samurai_type || undefined,
-    companySize: data.company_size || 'unknown',
-    reportLink,
-    consultLink: CONSULT_URL || undefined,
-    shareLink: SHARE_URL || undefined,
-    openChatLink: OPENCHAT_URL || undefined,
-    openChatQrSrc: OPENCHAT_QR || undefined,
-    utm: { source: 'email', medium: 'diagnosis', campaign: 'report' },
-    diagId: data.id,
-  });
+    // ★型アダプタ：テンプレの“1引数”に合わせ、名前系は同義キーを同梱
+    const input = {
+      toName,
+      userName: toName,
+      recipientName: toName,
 
-  // 送信スキップ（ドライラン）
-  if (dryRun) {
-    return ok({
-      ok: true,
-      dryRun: true,
-      to: data.email,
-      subject: mail.subject,
-      preview: mail.text?.slice(0, 120) ?? '',
+      samuraiType,
+      companySize,
       reportLink,
-    });
-  }
+      consultLink,
 
-  // 送信（★ replyTo プロパティ名に注意。ハイフンは不可）
-  try {
-    await sendMail({
-      to: data.email,
+      // 追加メタ
+      shareLink,
+      openChatLink,
+      openChatQrSrc,
+      utm,
+      diagId,
+    } as unknown as ReportEmailInput;
+
+    const mail = buildReportEmail(input);
+
+    // 送信（宛先が無い場合はフォールバック宛）
+    const to = (email || process.env.MAIL_TO_TRS || '').toString().trim();
+    if (to) {
+      await sendMail({
+        to,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      to,
       subject: mail.subject,
-      html: mail.html,
-      text: mail.text,
-      replyTo: MAIL_REPLY_TO, // ← OK（/lib/mailer.ts が reply_to に変換）
-      tagId: data.id,
+      htmlPreviewBytes: Buffer.byteLength(mail.html, 'utf8'),
     });
-  } catch (e: any) {
-    console.error('[report-request] sendMail error:', e);
-    return bad(`Send failed: ${e?.message || String(e)}`, 502);
+  } catch (err: any) {
+    console.error('[api/report-request] error:', err);
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? String(err) },
+      { status: 400 }
+    );
   }
-
-  return ok({ ok: true });
-}
-
-export async function OPTIONS() {
-  return ok({ ok: true });
 }

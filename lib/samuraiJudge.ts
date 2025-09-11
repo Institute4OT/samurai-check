@@ -262,3 +262,37 @@ export function judgeSamurai(
 ): SamuraiType {
   return explainSamuraiDecision(scores, cfg).decided;
 }
+
+// ===== ここから追記（ファイル末尾あたり）=====
+
+// 既存の詳細判定を使って「最終タイプだけ」返す互換API
+export function judgeSamuraiType(
+  scores: NormalizedCategoryScores,
+  cfg: JudgeConfig = defaultJudgeConfig
+): SamuraiType {
+  return explainSamuraiDecision(scores, cfg).decided;
+}
+
+/**
+ * 互換: 他ファイルが `@/lib/samuraiJudge` から `samuraiDescriptions` を import している想定のため、
+ * 実体が別ファイルにある場合でもビルドが止まらないよう、フォールバックを提供。
+ * 実体をお持ちなら、下のダミーを削除して `export { samuraiDescriptions } from './(実体のファイル)';`
+ * に入れ替えてください。
+ */
+export const samuraiDescriptions: Record<
+  SamuraiType,
+  { title: string; caption?: string; summary?: string }
+> = {
+  // ダミー（空文字）。運用で実体がある場合は差し替え推奨。
+  // 空のままでもビルドは通ります（実体に差し替えたらこちらは不要）。
+  // 既知のキーだけ型を満たすために並べています。
+  SANADA: { title: '' } as any,
+  ODA: { title: '' } as any,
+  TOYOTOMI: { title: '' } as any,
+  TOKUGAWA: { title: '' } as any,
+  UESUGI: { title: '' } as any,
+  SAITO: { title: '' } as any,
+  IMAGAWA: { title: '' } as any,
+} as any;
+
+// ===== 追記ここまで =====

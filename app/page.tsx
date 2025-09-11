@@ -6,8 +6,14 @@ import StartScreen from '@/components/StartScreen';
 import QuizQuestion from '@/components/QuizQuestion';
 import { quizQuestions, QuizQuestion as QuizQuestionType } from '@/lib/quizQuestions';
 import { shuffleArray } from '@/lib/utils';
-import { calculateCategoryScores, debugScoreCalculation, CategoryScores } from '@/lib/scoringSystem';
-import { judgeSamuraiType, SamuraiType } from '@/lib/samuraiJudge';
+
+// ここはラッパーだけ使う（2引数: pattern, answers）
+import { debugScoreCalculation } from '@/lib/scoringSystem';
+
+// 型は diagnosis から。CategoryScores ではなく NormalizedCategoryScores を使う
+import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
+import { judgeSamuraiType } from '@/lib/samuraiJudge';
+
 import { supabase, SamuraiResult } from '@/lib/supabase';
 import { generateScoreComments } from '@/lib/generateScoreComments';
 import { DISPLAY_ORDER, blockTitleByFirstPosition } from '@/lib/quizBlocks';
@@ -24,7 +30,7 @@ export default function Home() {
   const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
   const [shuffledQuestions, setShuffledQuestions] = useState<QuizQuestionType[]>([]);
   const [allAnswers, setAllAnswers] = useState<{ questionId: number; selectedAnswers: string[] }[]>([]);
-  const [finalScores, setFinalScores] = useState<CategoryScores | null>(null);
+  const [finalScores, setFinalScores] = useState<NormalizedCategoryScores | null>(null);
   const [samuraiType, setSamuraiType] = useState<SamuraiType | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [generatedComments, setGeneratedComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
@@ -44,7 +50,7 @@ export default function Home() {
 
   // Supabase へ結果保存（行の作成まで。確定は ResultPanel 内の FinalizeOnMount）
   const saveResultsToSupabase = async (
-    scores: CategoryScores,
+    scores: NormalizedCategoryScores,
     judgedType: SamuraiType,
     answers: { questionId: number; selectedAnswers: string[] }[],
   ) => {
@@ -52,15 +58,15 @@ export default function Home() {
       const generatedUserId =
         globalThis.crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-      const scorePattern: Record<string, string[]> = {};
-      answers.forEach((a) => {
-        scorePattern[`Q${a.questionId}`] = a.selectedAnswers;
-      });
+      // FinalizeOnMount へも渡せるスナップショット
+      const scorePattern: Record<string, string[]> = Object.fromEntries(
+        answers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
+      );
 
       const resultData: Partial<SamuraiResult> & Record<string, any> = {
         id: generatedUserId,
-        score_pattern: scorePattern,  // 回答スナップショット（監査用）
-        samurai_type: String(judgedType), // 旧列（互換用）。確定は Finalize API が担当
+        score_pattern: scorePattern,     // 回答スナップショット（監査用）
+        samurai_type: String(judgedType),// 旧列（互換用）。確定は Finalize API
         name: null,
         email: null,
         company_size: null,
@@ -88,9 +94,8 @@ export default function Home() {
     const currentQuestion = shuffledQuestions[currentPos - 1];
     if (!currentQuestion) return;
 
-    // ★ 未回答ガード（UI無効化に加えてロジックでも二重にブロック）
+    // ★ 未回答ガード
     if (selectedAnswers.length === 0) {
-      // ここでは alert で明確に止める（他の導線でも誤作動しないように）
       alert('少なくとも1つは選んでください。');
       return;
     }
@@ -102,17 +107,28 @@ export default function Home() {
     if (currentPos < shuffledQuestions.length) {
       setCurrentStep(`q${currentPos + 1}` as `q${number}`);
     } else {
-      const scores = calculateCategoryScores(updatedAllAnswers);
+      // ===== 最終計算 =====
+      // 1) ScorePattern を作る（Q1→選択肢...）
+      const pattern: Record<string, string[]> = Object.fromEntries(
+        updatedAllAnswers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
+      );
+
+      // 2) ラッパーで正規化スコアを算出（2引数必須）
+      const scores = debugScoreCalculation(pattern, updatedAllAnswers) as NormalizedCategoryScores;
       setFinalScores(scores);
 
+      // 3) タイプ判定
       const judged = judgeSamuraiType(scores);
       setSamuraiType(judged);
 
-      const comments = generateScoreComments(scores);
+      // 4) コメント生成（型差がある環境でも安全に通す）
+      const comments = generateScoreComments(scores as unknown as any);
       setGeneratedComments(comments);
 
+      // 5) 保存 & デバッグ出力
       await saveResultsToSupabase(scores, judged, updatedAllAnswers);
-      debugScoreCalculation(updatedAllAnswers);
+      // デバッグ出力だけもう一度流しても良いが、同じ関数なので省略可
+      // debugScoreCalculation(pattern, updatedAllAnswers);
 
       setCurrentStep('result');
     }

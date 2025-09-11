@@ -5,8 +5,7 @@ import { sendMail } from '@/lib/mail';
 import {
   renderConsultIntakeMailToUser,
   renderConsultIntakeMailToOps,
-  bookingUrlFor,
-  type Consultant as EmailConsultant,
+  // bookingUrlFor は使わずローカル生成に切替（型衝突を避ける）
 } from '@/lib/emailTemplates';
 
 // env の存在チェック（ローカル関数）
@@ -21,7 +20,8 @@ export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1']; // Tokyo(羽田)
 
 // ===== Types =====
-type Consultant = 'ishijima' | 'morigami' | 'either';
+// ※ emailTemplates 側の Consultant と衝突しない自前のキー型
+type ConsultantKey = 'ishijima' | 'morigami' | 'either';
 
 type TopicKey =
   | 'meeting'       // 会議設計・合意形成
@@ -40,7 +40,7 @@ const ISHI_SET = new Set<TopicKey>(['meeting','relations','brain','delegation','
 const MORI_SET = new Set<TopicKey>(['engagement','career','culture']);
 // vision は中立（どちらでも可）
 
-function autoAssign(themes: string[]): Consultant {
+function autoAssign(themes: string[]): ConsultantKey {
   const picked = Array.from(
     new Set((themes || []).map(s => String(s).trim()).filter(Boolean) as TopicKey[])
   );
@@ -49,40 +49,128 @@ function autoAssign(themes: string[]): Consultant {
   return 'ishijima'; // デフォルト
 }
 
+/** 予約URL（rid/email クエリ付与）をローカルで生成 */
+function makeBookingUrl(req: Request, rid?: string | null, email?: string) {
+  const url = new URL(req.url);
+  const origin = `${url.protocol}//${url.host}`;
+  const base = (process.env.NEXT_PUBLIC_BOOKING_BASE_URL || `${origin}/consult`).trim();
+  const qs = new URLSearchParams();
+  if (rid) qs.set('rid', rid);
+  if (email) qs.set('email', email);
+  return qs.toString() ? `${base}?${qs.toString()}` : base;
+}
+
+/* ===========================================================
+   受信ボディの読取を JSON / x-www-form-urlencoded / multipart
+   の三態で吸収するヘルパー
+   =========================================================== */
+async function readBookingRequest(req: Request) {
+  const ct = (req.headers.get('content-type') || '').toLowerCase();
+  const normalizeThemes = (xs: unknown) =>
+    (Array.isArray(xs) ? xs : xs ? [xs] : [])
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+
+  // 1) multipart / x-www-form-urlencoded（formData が無い環境もある）
+  if (ct.includes('multipart/form-data') || ct.includes('application/x-www-form-urlencoded')) {
+    if (typeof (req as any).formData === 'function') {
+      // ★ fd を FormData で型付け
+      const fd: FormData = await (req as any).formData();
+      return {
+        name: String(fd.get('name') ?? '').trim(),
+        email: String(fd.get('email') ?? '').trim(),
+        rid: String(fd.get('rid') ?? fd.get('resultId') ?? fd.get('id') ?? '').trim(),
+        assigneePref: (String(fd.get('assigneePref') ?? 'either').trim() || 'either') as ConsultantKey,
+        // ★ v: FormDataEntryValue を明示（string or File）
+        themes: (fd.getAll('themes') as FormDataEntryValue[])
+          .map((v: FormDataEntryValue) => (typeof v === 'string' ? v.trim() : v.name))
+          .filter(Boolean),
+        note: (String(fd.get('note') ?? '').trim() || null) as string | null,
+        companyName: (String(fd.get('companyName') ?? '').trim() || null) as string | null,
+        companySize: (String(fd.get('companySize') ?? '').trim() || null) as string | null,
+        industry: (String(fd.get('industry') ?? '').trim() || null) as string | null,
+        ageRange: (String(fd.get('ageRange') ?? '').trim() || null) as string | null,
+        style: (String(fd.get('style') ?? '').trim() || null) as string | null,
+      };
+    } else {
+      //  …（urlencoded フォールバックはそのままでOK）
+      const text = await req.text();
+      const p = new URLSearchParams(text);
+      return {
+        name: String(p.get('name') ?? '').trim(),
+        email: String(p.get('email') ?? '').trim(),
+        rid: String(p.get('rid') ?? p.get('resultId') ?? p.get('id') ?? '').trim(),
+        assigneePref: (String(p.get('assigneePref') ?? 'either').trim() || 'either') as ConsultantKey,
+        themes: p.getAll('themes').map(s => String(s).trim()).filter(Boolean),
+        note: (String(p.get('note') ?? '').trim() || null) as string | null,
+        companyName: (String(p.get('companyName') ?? '').trim() || null) as string | null,
+        companySize: (String(p.get('companySize') ?? '').trim() || null) as string | null,
+        industry: (String(p.get('industry') ?? '').trim() || null) as string | null,
+        ageRange: (String(p.get('ageRange') ?? '').trim() || null) as string | null,
+        style: (String(p.get('style') ?? '').trim() || null) as string | null,
+      };
+    }
+  }
+
+  // 2) application/json（一番扱いやすい）
+  if (ct.includes('application/json')) {
+    const j = await req.json();
+    return {
+      name: String(j.name ?? '').trim(),
+      email: String(j.email ?? '').trim(),
+      rid: String(j.rid ?? j.resultId ?? j.id ?? '').trim(),
+      assigneePref: (String(j.assigneePref ?? 'either').trim() || 'either') as ConsultantKey,
+      themes: normalizeThemes(j.themes),
+      note: (j.note ? String(j.note).trim() : '') || null,
+      companyName: (j.companyName ? String(j.companyName).trim() : '') || null,
+      companySize: (j.companySize ? String(j.companySize).trim() : '') || null,
+      industry: (j.industry ? String(j.industry).trim() : '') || null,
+      ageRange: (j.ageRange ? String(j.ageRange).trim() : '') || null,
+      style: (j.style ? String(j.style).trim() : '') || null,
+    };
+  }
+
+  // 未対応CTは空を返す（後段で400判定）
+  return {
+    name: '', email: '', rid: '',
+    assigneePref: 'either' as ConsultantKey,
+    themes: [] as string[],
+    note: null, companyName: null, companySize: null, industry: null, ageRange: null, style: null,
+  };
+}
+
 // ====== Handler ======
 export async function POST(req: Request) {
   try {
-    // multipart/form-data を受け取る
-    const fd = await req.formData();
+    // ★ ここを三態対応の読取に置き換え
+    const body = await readBookingRequest(req);
 
     // --- 必須 ---
-    const name  = String(fd.get('name')  ?? '').trim();
-    const email = String(fd.get('email') ?? '').trim();
+    const name  = body.name;
+    const email = body.email;
     if (!name || !email) {
       return NextResponse.json({ ok: false, error: 'missing name/email' }, { status: 400 });
     }
 
     // --- 任意（hidden 推奨含む） ---
-    // ゆれ吸収：rid / resultId / id どれでも可
-    const resultId = (String(fd.get('rid') ?? '') || String(fd.get('resultId') ?? '') || String(fd.get('id') ?? '')).trim();
-    const style        = String(fd.get('style')        ?? '').trim() || null;
-    const assigneePref = (String(fd.get('assigneePref') ?? 'either').trim() || 'either') as Consultant;
-    const themes       = fd.getAll('themes').map(v => String(v).trim()).filter(Boolean);
-    const note         = String(fd.get('note')         ?? '').trim() || null;
+    const resultId    = body.rid;
+    const style       = body.style;
+    const assigneePref = body.assigneePref;
+    const themes      = body.themes;
+    const note        = body.note;
 
     // 申込者が任意で入れた可能性（今はフォームに出していない想定）
-    let companyName = (String(fd.get('companyName') ?? '').trim() || null);
-    let companySize = (String(fd.get('companySize') ?? '').trim() || null);
-    let industry    = (String(fd.get('industry')    ?? '').trim() || null);
-    let ageRange    = (String(fd.get('ageRange')    ?? '').trim() || null);
+    let companyName = body.companyName;
+    let companySize = body.companySize;
+    let industry    = body.industry;
+    let ageRange    = body.ageRange;
 
     // either のときだけ自動割当
-    const assigned: Consultant =
+    const assigned: ConsultantKey =
       assigneePref === 'either' ? autoAssign(themes) : assigneePref;
 
-    // メールテンプレ側の Consultant 型へ（undefined=どちらでも可）
-    const consultantForMail: EmailConsultant =
-      (assigned === 'either' ? undefined : assigned) as EmailConsultant;
+    // メールテンプレ側に渡す値（型注釈は付けない＝衝突を避ける）
+    const consultantForMail = (assigned === 'either' ? undefined : assigned);
 
     // ====== DB 保存（best-effort） ======
     try {
@@ -161,7 +249,7 @@ export async function POST(req: Request) {
     // ====== メール送信 ======
 
     // 1) 申込者へ（予約URLつき）
-    const userMail = renderConsultIntakeMailToUser({
+    const userMail = (renderConsultIntakeMailToUser as unknown as (args: any) => any)({
       name,
       consultant: consultantForMail,
       resultId: resultId || undefined,
@@ -175,7 +263,7 @@ export async function POST(req: Request) {
     });
 
     // 2) 運用通知（補足を末尾に添付）— RID を必ず明記
-    const opsMail = renderConsultIntakeMailToOps({
+    const opsMail = (renderConsultIntakeMailToOps as unknown as (args: any) => any)({
       email,
       name,
       companyName: companyName || undefined,
@@ -200,7 +288,7 @@ export async function POST(req: Request) {
     });
 
     // 3) 画面側へ返却（即リダイレクト用 URL も同梱）— RID も返す
-    const bookingUrl = bookingUrlFor(consultantForMail, resultId || undefined, email);
+    const bookingUrl = makeBookingUrl(req, resultId || null, email);
     return NextResponse.json({ ok: true, assigned, bookingUrl, rid: resultId || null });
   } catch (e: any) {
     console.error('[api/consult/booking] failed:', e);

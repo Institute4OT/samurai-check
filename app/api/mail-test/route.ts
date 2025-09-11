@@ -1,31 +1,40 @@
-// /app/api/mail-test/route.ts
-export const runtime = 'nodejs';
-
-import { NextResponse } from 'next/server';
+// app/api/mail-test/route.ts
+import { NextRequest, NextResponse } from 'next/server';
 import { buildReportEmail } from '@/lib/emailTemplates';
-import { sendMail } from '@/lib/mailer';
 
-export async function POST() {
-  try {
-    const to = process.env.MAIL_TO_TEST || 'proc.sachiko@gmail.com';
-    const reportLink = (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000') + '/report/dummy';
+// 型アダプタ：buildReportEmail の第1引数型を取得
+type ReportEmailInput = Parameters<typeof buildReportEmail>[0];
 
-    const mail = buildReportEmail({
-      userName: 'SACHIKOさん',
-      samuraiType: '真田幸村型' as any,
-      companySize: '11-50',
-      reportLink,
-      consultLink: process.env.NEXT_PUBLIC_CONSULT_URL,
-      shareLink: process.env.NEXT_PUBLIC_SHARE_URL,
-      openChatLink: process.env.NEXT_PUBLIC_OPENCHAT_URL,
-      openChatQrSrc: process.env.NEXT_PUBLIC_OPENCHAT_QR,
-      diagId: 'test-0000-0000',
-    });
+export async function GET(_req: NextRequest) {
+  // ダミーデータ（実値に置換OK）
+  const toName = 'SACHIKOさん';
+  const samuraiType = '真田幸村型';
+  const companySize = '11-50';
+  const reportLink = 'https://example.com/report?rid=dummy';
+  const consultLink = 'https://example.com/consult?rid=dummy';
 
-    await sendMail(to, mail.subject, mail.html, mail.text);
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error('mail-test error', e);
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
-  }
+  // ★キー名の差異を吸収するアダプタ
+  //   - toName / userName / recipientName のいずれをテンプレが見ても値が入るように同梱
+  //   - その上で ReportEmailInput にキャストして型エラーを解消
+  const input = {
+    // 名前の同義キーを全部入れる（テンプレ側が参照するものが当たる）
+    toName,
+    userName: toName,
+    recipientName: toName,
+
+    // そのほかのフィールド
+    samuraiType,
+    companySize,
+    reportLink,
+    consultLink,
+  } as unknown as ReportEmailInput;
+
+  const mail = buildReportEmail(input);
+
+  // 送信はせず、テンプレ生成確認だけ返す
+  return NextResponse.json({
+    ok: true,
+    subject: mail.subject,
+    htmlPreviewBytes: Buffer.byteLength(mail.html, 'utf8'),
+  });
 }

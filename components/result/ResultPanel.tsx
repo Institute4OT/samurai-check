@@ -90,6 +90,20 @@ export default function ResultPanel({
   const typeResolved   = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
   const displayName    = typeResolved.display || samuraiType || '武将';
 
+  // ← ここが型エラーの原因箇所。オブジェクト（title/summary等）から「表示用の文字列」を抽出して明示的にstring化
+  const descriptionText = useMemo(() => {
+    const raw = (samuraiDescriptions as any)?.[samuraiType as any];
+    if (!raw) return '';
+    if (typeof raw === 'string') return raw;
+    return (
+      raw?.summary ??
+      raw?.caption ??
+      raw?.caption2 ??
+      raw?.title ??
+      ''
+    ) as string;
+  }, [samuraiType]);
+
   const [shareOpen, setShareOpen] = useState(false);
 
   return (
@@ -126,7 +140,7 @@ export default function ResultPanel({
           )}
 
           <p className="text-lg md:text-xl text-gray-700 leading-relaxed">
-            {samuraiDescriptions[samuraiType as keyof typeof samuraiDescriptions] ?? ''}
+            {descriptionText}
           </p>
 
           <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
