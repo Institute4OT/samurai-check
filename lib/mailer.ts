@@ -1,44 +1,28 @@
 // /lib/mailer.ts
 // ============================================================
-// Resend SDK を使ったメール送信ユーティリティ（運用強化版）
-// - MAIL_FROM / MAIL_REPLY_TO を .env / Vercel Env で統一管理
-// - Reply-To / CC / BCC / タグ（X-Entity-Ref-ID）対応
+// Resend SDK を使ったメール送信ユーティリティ（遅延初期化版）
+// - MAIL_FROM / RESEND_API_KEY は .env から取得
+// - Reply-To / CC / BCC / タグ対応
 // - text 未指定時は HTML から自動生成
-// - 例外メッセージを分かりやすく整形
 // ============================================================
 
 import { Resend } from 'resend';
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY!;
-const MAIL_FROM =
-  (process.env.MAIL_FROM || 'IOT 武将タイプ診断 <report@ourdx-mtg.com>').trim();
-
-// 未指定時の既定の返信先（MAIL_REPLY_TO → MAIL_FROM のアドレス部 → MAIL_FROM）
-const DEFAULT_REPLY_TO =
-  (process.env.MAIL_REPLY_TO?.trim() ||
-    MAIL_FROM.match(/<(.+?)>/)?.[1] ||
-    MAIL_FROM).trim();
-
-if (!RESEND_API_KEY) {
-  console.warn('[mailer] RESEND_API_KEY is not set. Email sending will fail.');
-}
-
-// Resend クライアント（サーバー専用）
-const resend = new Resend(RESEND_API_KEY);
-
-// ===== 型 =====
 export type SendMailOptions = {
-  to: string | string[];            // 宛先（複数可）
-  subject: string;                  // 件名
-  html: string;                     // HTML 本文
-  text?: string;                    // プレーンテキスト（省略可 → 自動生成）
-  replyTo?: string | string[];      // 返信先（未指定なら DEFAULT_REPLY_TO）
+  to: string | string[];
+  subject: string;
+  html: string;
+  text?: string;
+  replyTo?: string | string[];
   cc?: string | string[];
   bcc?: string | string[];
-  tagId?: string;                   // Resendダッシュボードで追跡する任意ID
+  tagId?: string; // Resend の X-Entity-Ref-ID に載せて追跡
 };
 
-// ===== HTML → Text 簡易変換 =====
+const MAIL_FROM =
+  process.env.MAIL_FROM || 'IOT（企業の未来づくり研究所） <noreply@ourdx-mtg.com>';
+
+// ---- HTML → text 簡易変換 ---------------------------------
 function htmlToText(html: string) {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
@@ -50,28 +34,43 @@ function htmlToText(html: string) {
     .trim();
 }
 
-/** メール送信（Resend） */
+// ---- Resend クライアント（遅延初期化） ---------------------
+let _resend: Resend | null = null;
+
+function getResend(): Resend {
+  if (_resend) return _resend;
+  const key = process.env.RESEND_API_KEY;
+  if (!key) {
+    // ここで throw しても「送信を呼んだ時」にだけ落ちる（ビルド時には落ちない）
+    throw new Error(
+      '[mailer] RESEND_API_KEY is not set. Set it in Vercel → Settings → Environment Variables.'
+    );
+  }
+  _resend = new Resend(key);
+  return _resend!;
+}
+
+/**
+ * メール送信（Resend）
+ * - 失敗時は Error を throw
+ */
 export async function sendMail(opts: SendMailOptions) {
   const { to, subject, html } = opts;
-  if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY is not set');
   if (!to) throw new Error('sendMail: `to` is required');
   if (!subject) throw new Error('sendMail: `subject` is required');
   if (!html) throw new Error('sendMail: `html` is required');
 
   const text = opts.text ?? htmlToText(html);
-  const replyTo = opts.replyTo ?? DEFAULT_REPLY_TO;
-
-  // 任意のタグを X-Entity-Ref-ID に載せると Resend ダッシュボードで追いやすい
   const headers = opts.tagId ? { 'X-Entity-Ref-ID': String(opts.tagId) } : undefined;
 
+  const resend = getResend();
   const { data, error } = await resend.emails.send({
     from: MAIL_FROM,
     to: opts.to,
     subject,
     html,
     text,
-    // Resend のフィールド名は camelCase（reply_to ではなく replyTo）
-    replyTo,
+    replyTo: opts.replyTo,
     cc: opts.cc,
     bcc: opts.bcc,
     headers,
