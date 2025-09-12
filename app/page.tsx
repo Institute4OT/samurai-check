@@ -73,7 +73,7 @@ export default function Home() {
         company_size: null,
       };
 
-      const { error } = await supabase.from('samurairesults').insert(resultData).select();
+      const { error } = await supabase.from('samurairesults').insert(resultData);
       if (error) {
         // ここは表示に影響しないので、ログだけ
         console.warn('Error saving results to Supabase:', error);
