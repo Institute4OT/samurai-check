@@ -24,6 +24,11 @@ import ResultPanel from '@/components/result/ResultPanel';
 const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
 const NUMERIC_ORDER = DISPLAY_ORDER.map((code) => Number(String(code).replace(/^Q/i, '')));
 
+// フェイルセーフな配列化
+function toArray<T>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
 /* ======================= 画面本体 ======================= */
 
 export default function Home() {
@@ -102,6 +107,7 @@ export default function Home() {
     setFinalScores(null);
     setSamuraiType(null);
     setUserId(null);
+    setGeneratedComments({ strengths: [], tips: [] });
   };
 
   const nextQuestion = async () => {
@@ -122,38 +128,60 @@ export default function Home() {
     if (currentPos < shuffledQuestions.length) {
       setCurrentStep(`q${currentPos + 1}` as `q${number}`);
     } else {
-      // ===== 最終計算 =====
-      const pattern: Record<string, string[]> = Object.fromEntries(
-        updatedAllAnswers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
-      );
-      const scores = debugScoreCalculation(pattern, updatedAllAnswers) as NormalizedCategoryScores;
-      setFinalScores(scores);
-
-      const judged = judgeSamuraiType(scores);
-      setSamuraiType(judged);
-
-      const comments = generateScoreComments(scores as unknown as any);
-      setGeneratedComments(comments);
-
-      // /result ページが読むため localStorage に保存
+      // ===== 最終計算（フェイルセーフ付き） =====
       try {
-        localStorage.setItem('samurai-final-scores', JSON.stringify(scores));
-        localStorage.setItem('samurai-type', JSON.stringify(String(judged)));
-        localStorage.setItem('samurai-comments', JSON.stringify(comments));
-        localStorage.setItem('samurai-score-pattern', JSON.stringify(pattern));
-      } catch { /* ignore */ }
+        // 1) パターン
+        const pattern: Record<string, string[]> = Object.fromEntries(
+          updatedAllAnswers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
+        );
 
-      // DB保存（RID 取得）
-      const rid = await saveResultsToSupabase(scores, judged, updatedAllAnswers);
+        // 2) スコア
+        const scores = debugScoreCalculation(pattern, updatedAllAnswers) as NormalizedCategoryScores;
+        setFinalScores(scores);
 
-      // このページでも一応結果は描ける（互換）
-      setCurrentStep('result');
+        // 3) タイプ判定
+        const judged = judgeSamuraiType(scores);
+        setSamuraiType(judged);
 
-      // 親から責任を持って /result へ遷移（RID があれば付与）
-      setTimeout(() => {
-        const q = rid ? `?rid=${encodeURIComponent(rid)}` : '';
-        router.push(`/result${q}`);
-      }, 50);
+        // 4) コメント生成（例外を握りつぶして続行）
+        let commentsSafe = { strengths: [] as string[], tips: [] as string[] };
+        try {
+          const c: any = generateScoreComments(scores as unknown as any);
+          commentsSafe = {
+            strengths: toArray<string>(c?.strengths),
+            tips: toArray<string>(c?.tips),
+          };
+        } catch (e) {
+          console.error('[generateScoreComments] failed:', e);
+        }
+        setGeneratedComments(commentsSafe);
+
+        // 5) /result 用に保存
+        try {
+          localStorage.setItem('samurai-final-scores', JSON.stringify(scores));
+          localStorage.setItem('samurai-type', JSON.stringify(String(judged)));
+          localStorage.setItem('samurai-comments', JSON.stringify(commentsSafe));
+          localStorage.setItem('samurai-score-pattern', JSON.stringify(pattern));
+        } catch { /* ignore */ }
+
+        // 6) DB保存（RID 取得）
+        const rid = await saveResultsToSupabase(scores, judged, updatedAllAnswers);
+
+        // 7) 互換表示（このページでも結果を描ける）
+        setCurrentStep('result');
+
+        // 8) 親から責任を持って /result へ遷移（RID があれば付与）
+        setTimeout(() => {
+          const q = rid ? `?rid=${encodeURIComponent(rid)}` : '';
+          router.push(`/result${q}`);
+        }, 50);
+      } catch (e) {
+        // どこかで予期せぬ例外が起きても、とにかく /result へ進める
+        console.error('[finalize] unexpected error:', e);
+        setGeneratedComments({ strengths: [], tips: [] });
+        setCurrentStep('result');
+        setTimeout(() => router.push('/result'), 50);
+      }
     }
 
     // 現問の選択はクリア
