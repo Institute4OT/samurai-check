@@ -3,7 +3,7 @@ import { KEY_TO_JA } from '@/lib/samuraiTypeMap';
 import { ORDER, clamp03 } from '@/lib/scoreSnapshot';
 import type { CatKey } from '@/lib/scoreSnapshot';
 
-/** エイリアス（英語/日本語/表記ゆれ）→ 正式キー */
+/** ラベル表記ゆれ → 正式キーへ（英名/和名/略称/アンダースコア等まとめて吸収） */
 const ALIASES: Record<string, CatKey> = {
   // delegation
   delegation: 'delegation',
@@ -27,8 +27,8 @@ const ALIASES: Record<string, CatKey> = {
 
   // updatePower
   updatepower: 'updatePower',
-  update: 'updatePower',
   update_ability: 'updatePower',
+  update: 'updatePower',
   'アップデート力': 'updatePower',
   '更新力': 'updatePower',
   '変化対応力': 'updatePower',
@@ -48,69 +48,54 @@ const ALIASES: Record<string, CatKey> = {
   '無自覚ハラスメント傾向': 'harassmentRisk',
 };
 
-// 日本語ラベル逆引き用
-const JP_BY_KEY: Record<CatKey, string> =
-  Object.fromEntries(ORDER.map(o => [o.key, o.label])) as Record<CatKey, string>;
-
-const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
-
-function asKey(raw: unknown): CatKey | undefined {
-  if (!raw) return undefined;
-  const s = String(raw).trim();
-  const n = norm(s);
-  // 1) 直接/正規化エイリアス
-  const byAlias = (ALIASES[s] ?? ALIASES[n]) as CatKey | undefined;
-  if (byAlias) return byAlias;
-  // 2) 日本語ラベル完全一致（空白無視）
-  const hit = (Object.entries(JP_BY_KEY) as Array<[CatKey, string]>)
-    .find(([, ja]) => norm(ja) === norm(s));
-  return hit?.[0];
-}
-
-function pickNumber(v: unknown): number {
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string') {
-    const n = Number(v.trim());
-    return Number.isFinite(n) ? n : NaN;
-  }
-  if (v && typeof v === 'object') {
-    const o = v as any;
-    for (const k of ['score', 'value', 'val', 's']) {
-      const n = pickNumber(o?.[k]);
-      if (Number.isFinite(n)) return n;
-    }
+/** いろんな形から「数値」を引っこ抜く（scoreやvalue内包も拾う） */
+function pickNumber(val: unknown): number {
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  if (typeof val === 'string' && val.trim() !== '') return Number(val);
+  if (val && typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    if ('score' in obj) return pickNumber(obj.score);
+    if ('value' in obj) return pickNumber(obj.value);
   }
   return NaN;
 }
 
-/** 任意形（Record でも Array でも OK）→ 固定6カテゴリ配列へ */
+/** 任意形（Record でも Array でもOK）→ 6カテゴリ配列へ統一 */
 export function normalizeToCatArray(
   input: unknown
 ): Array<{ key: CatKey; label: string; score: number }> {
-  const bucket = new Map<CatKey, number>();
+  const dict: Partial<Record<CatKey, number>> = {};
 
-  // A) 配列 [{ key/label, score }] 形
+  const push = (rawKey: unknown, rawVal: unknown) => {
+    const k0 = String(rawKey ?? '').trim();
+    if (!k0) return;
+    const norm = k0.replace(/[\s_-]/g, '').toLowerCase();
+    const key = (ALIASES[k0] || ALIASES[norm]) as CatKey | undefined;
+    if (!key) return;
+    const n = pickNumber(rawVal);
+    if (Number.isFinite(n)) dict[key] = clamp03(n);
+  };
+
+  // 1) 配列 [{ key,label,score }] もしくは [{ label, score }]
   if (Array.isArray(input)) {
-    for (const it of input) {
-      const k = asKey((it as any)?.key ?? (it as any)?.label);
-      const v = pickNumber((it as any)?.score ?? (it as any)?.value ?? (it as any)?.val);
-      if (k && Number.isFinite(v)) bucket.set(k, clamp03(v));
+    for (const row of input as any[]) {
+      if (!row || typeof row !== 'object') continue;
+      const r = row as any;
+      push(r.key ?? r.label, r.score ?? r.value);
     }
   }
-  // B) オブジェクト { key: number | { score: n } }
+  // 2) オブジェクト { "権限委譲・構造健全度": 2.1, ... }
   else if (input && typeof input === 'object') {
-    for (const [rawK, v] of Object.entries(input as Record<string, unknown>)) {
-      const k = asKey(rawK);
-      const n = pickNumber(v);
-      if (k && Number.isFinite(n)) bucket.set(k, clamp03(n));
+    for (const [rawK, val] of Object.entries(input as Record<string, unknown>)) {
+      push(rawK, val);
     }
   }
 
-  // 常に 6 本返す（欠けは 0 で補完）
-  return ORDER.map(o => ({ key: o.key, label: o.label, score: clamp03(bucket.get(o.key) ?? 0) }));
+  // 3) 出力は順序固定の 6 要素
+  return ORDER.map(({ key, label }) => ({ key, label, score: clamp03((dict as any)[key]) }));
 }
 
-/** 武将タイプの表記ゆれ吸収（key/日本語/未知に対応） */
+/** 武将タイプ（key/日本語/未知）を表示名に整える */
 export function resolveSamuraiType(
   raw: string | null | undefined
 ): { key?: string; ja?: string; display: string } {
@@ -121,16 +106,15 @@ export function resolveSamuraiType(
     const ja = (KEY_TO_JA as any)[v] as string;
     return { key: v, ja, display: ja };
   }
-  const n = v.replace(/\s+/g, '').replace(/型$/, '');
+  const norm = (s: string) => s.replace(/\s+/g, '').replace(/型$/, '');
+  const n = norm(v);
   for (const [k, name] of Object.entries(KEY_TO_JA)) {
-    if (String(name).replace(/\s+/g, '').replace(/型$/, '') === n) {
-      return { key: k, ja: String(name), display: String(name) };
-    }
+    if (norm(String(name)) === n) return { key: k, ja: String(name), display: String(name) };
   }
   return { display: v };
 }
 
-/** 絵文字つきの短い評価ラベル（元の閾値を維持） */
+/** 絵文字つきの短い評価ラベル（元の閾値のまま） */
 export function getEmojiLabel(score: number): string {
   if (score >= 2.5) return '😄 良好';
   if (score >= 1.5) return '😐 注意';
