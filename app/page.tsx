@@ -5,30 +5,32 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import StartScreen from '@/components/StartScreen';
 import QuizQuestion from '@/components/QuizQuestion';
-import {
-  quizQuestions,
-  DISPLAY_ORDER,
-  BLOCKS,
-  type QuizQuestion as QuizQuestionType,
-} from '@/lib/quizQuestions';
+import { quizQuestions, QuizQuestion as QuizQuestionType } from '@/lib/quizQuestions';
 import { shuffleArray } from '@/lib/utils';
 
-// ここはラッパーだけ使う（2引数: pattern, answers）
+// 2引数: (pattern, answers)
 import { debugScoreCalculation } from '@/lib/scoringSystem';
 
-// 型は diagnosis から。CategoryScores ではなく NormalizedCategoryScores を使う
 import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
 import { judgeSamuraiType } from '@/lib/samuraiJudge';
 
 import { supabase, SamuraiResult } from '@/lib/supabase';
 import { generateScoreComments } from '@/lib/generateScoreComments';
+import { DISPLAY_ORDER, blockTitleByFirstPosition } from '@/lib/quizBlocks';
+import ResultPanel from '@/components/result/ResultPanel';
+
+/* ================= ユーティリティ ================= */
 
 const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
+const NUMERIC_ORDER = DISPLAY_ORDER.map((code) => Number(String(code).replace(/^Q/i, '')));
+
+/* ======================= 画面本体 ======================= */
 
 export default function Home() {
-  /* ========= 互換リダイレクト：/?rid=... → /result?rid=... ========= */
   const router = useRouter();
   const sp = useSearchParams();
+
+  // 旧リンク互換： /?rid=... で来たら /result?rid=... に寄せる
   useEffect(() => {
     const rid =
       sp.get('rid') || sp.get('resultId') || sp.get('resultid') || sp.get('id');
@@ -37,7 +39,6 @@ export default function Home() {
     }
   }, [sp, router]);
 
-  /* ======================= 画面ステート ======================= */
   const [currentStep, setCurrentStep] = useState<'start' | `q${number}` | 'result'>('start');
   const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
   const [shuffledQuestions, setShuffledQuestions] = useState<QuizQuestionType[]>([]);
@@ -47,46 +48,22 @@ export default function Home() {
   const [userId, setUserId] = useState<string | null>(null);
   const [generatedComments, setGeneratedComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
 
-  /* ========= 表示順：/lib/quizQuestions.ts を唯一の正とする ========= */
-  // DISPLAY_ORDER は ['Q2','Q3',...] なので数値ID配列に変換
-  const NUMERIC_ORDER = useMemo<number[]>(
-    () => DISPLAY_ORDER.map(code => Number(String(code).replace(/^Q/i, ''))),
-    []
-  );
-
-  // ブロック見出し：ブロック先頭の設問が画面に来たときだけ薄く出す
-  const blockTitleByFirstPosition = useMemo<Record<number, string>>(() => {
-    const posByCode = new Map<string, number>(
-      DISPLAY_ORDER.map((code, i) => [code, i + 1])
-    );
-    const map: Record<number, string> = {};
-    for (const b of BLOCKS) {
-      const first = b.items[0]; // 'Q2' など
-      const pos = posByCode.get(first);
-      if (pos) map[pos] = b.title;
-    }
-    return map;
-  }, []);
-
-  // 並び替え（選択肢のみランダム）
+  // 表示順に並び替え（選択肢だけランダム）
   const orderedQuestions = useMemo<QuizQuestionType[]>(() => {
     const byId = new Map(quizQuestions.map((q) => [q.id, q]));
     return NUMERIC_ORDER
       .map((id) => byId.get(id))
       .filter((q): q is QuizQuestionType => Boolean(q))
       .map((q) => ({ ...q, options: shuffleArray(q.options) }));
-  }, [NUMERIC_ORDER]);
+  }, []);
+  useEffect(() => setShuffledQuestions(orderedQuestions), [orderedQuestions]);
 
-  useEffect(() => {
-    setShuffledQuestions(orderedQuestions);
-  }, [orderedQuestions]);
-
-  /* ========= Supabaseへ「暫定保存」（行作成） ========= */
+  // Supabase へ結果保存（行の作成まで。RID を返す）
   const saveResultsToSupabase = async (
     scores: NormalizedCategoryScores,
     judgedType: SamuraiType,
     answers: { questionId: number; selectedAnswers: string[] }[],
-  ) => {
+  ): Promise<string | null> => {
     try {
       const generatedUserId =
         globalThis.crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -106,14 +83,18 @@ export default function Home() {
       };
 
       const { error } = await supabase.from('samurairesults').insert(resultData).select();
-      if (error) console.error('Error saving results to Supabase:', error);
-      else setUserId(generatedUserId);
+      if (error) {
+        console.error('Error saving results to Supabase:', error);
+        return null;
+      }
+      setUserId(generatedUserId);
+      return generatedUserId;
     } catch (error) {
       console.error('Error generating UUID or saving to Supabase:', error);
+      return null;
     }
   };
 
-  /* ======================= フロー制御 ======================= */
   const startQuiz = () => {
     setCurrentStep('q1');
     setSelectedAnswers([]);
@@ -142,24 +123,19 @@ export default function Home() {
       setCurrentStep(`q${currentPos + 1}` as `q${number}`);
     } else {
       // ===== 最終計算 =====
-      // 1) ScorePattern を作る（Q1→選択肢...）
       const pattern: Record<string, string[]> = Object.fromEntries(
         updatedAllAnswers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
       );
-
-      // 2) 正規化スコア算出
       const scores = debugScoreCalculation(pattern, updatedAllAnswers) as NormalizedCategoryScores;
       setFinalScores(scores);
 
-      // 3) タイプ判定
       const judged = judgeSamuraiType(scores);
       setSamuraiType(judged);
 
-      // 4) コメント生成
       const comments = generateScoreComments(scores as unknown as any);
       setGeneratedComments(comments);
 
-      // 5) ローカル保存（/result ページが参照）
+      // /result ページが読むため localStorage に保存
       try {
         localStorage.setItem('samurai-final-scores', JSON.stringify(scores));
         localStorage.setItem('samurai-type', JSON.stringify(String(judged)));
@@ -167,12 +143,20 @@ export default function Home() {
         localStorage.setItem('samurai-score-pattern', JSON.stringify(pattern));
       } catch { /* ignore */ }
 
-      // 6) DBに行作成（RID付与）
-      await saveResultsToSupabase(scores, judged, updatedAllAnswers);
+      // DB保存（RID 取得）
+      const rid = await saveResultsToSupabase(scores, judged, updatedAllAnswers);
 
-      // 7) 互換のためこのページでも結果を描画できるようにしておく
+      // このページでも一応結果は描ける（互換）
       setCurrentStep('result');
+
+      // 親から責任を持って /result へ遷移（RID があれば付与）
+      setTimeout(() => {
+        const q = rid ? `?rid=${encodeURIComponent(rid)}` : '';
+        router.push(`/result${q}`);
+      }, 50);
     }
+
+    // 現問の選択はクリア
     setSelectedAnswers([]);
   };
 
@@ -191,14 +175,11 @@ export default function Home() {
     }
   };
 
-  /* ======================= レンダリング ======================= */
-
-  // スタート画面
+  // ===== スタート画面 =====
   if (currentStep === 'start') return <StartScreen startQuiz={startQuiz} />;
 
-  // 結果画面（互換：このページでも表示できる）
+  // ===== 結果画面（互換：このページでも表示できる） =====
   if (currentStep === 'result') {
-    const ResultPanel = require('@/components/result/ResultPanel').default;
     return (
       <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
         <ResultPanel
@@ -212,7 +193,7 @@ export default function Home() {
     );
   }
 
-  // 質問画面（q1, q2, ...）
+  // ===== 質問画面（q1, q2, ...） =====
   if (String(currentStep).startsWith('q')) {
     const position = parseInt(String(currentStep).replace('q', ''), 10);
     const currentQuestion = shuffledQuestions[position - 1];
