@@ -30,7 +30,7 @@ export const CONSULTANTS: Record<ConsultantKey, Consultant> = {
     key: 'morigami',
     name: '森上 ヒロシ',
     title: '組織心理コンサルタント、秒速経営インストーラー',
-    bio: '約500社の職場改善、のべ14万人の職場診断に関与。幹部人材育成、組織のエンゲージメント向上等が得意。。',
+    bio: '約500社の職場改善、のべ14万人の職場診断に関与。幹部人材育成、キャリア軸の組織風土改革等が得意。',
     tags: ['構造設計', '定着支援', 'エンゲージメント', 'キャリア支援'],
     credentials: ['国家資格キャリアコンサルタント', '他、キャリア関連資格を複数所有'],
     photo: '/images/consultants/morigami.png',

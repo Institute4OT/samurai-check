@@ -1,8 +1,9 @@
 // /lib/emailTemplates.tsx
 // ============================================================
-// メールテンプレート集（実装一体版）
-//  - 互換APIもここで提供：過去コードの import を壊さない
-//  - buildReportEmail をここに実装（デフォルトエクスポート）
+// メールテンプレート集（互換API + V2再エクスポート）
+// - 既存コードを壊さないための下位互換ユーティリティを同梱
+// - 旧来の「簡易版」buildReportEmail をデフォルト実装
+// - 拡張版（会社規模で分岐など）は emailTemplatesV2.ts で実装し、ここから再エクスポート
 // ============================================================
 
 /** 共通：メールレンダリング結果 */
@@ -14,25 +15,34 @@ export type MailRender = {
 
 // ------------------------------------------------------------
 // 基本URL（レポート画面のベース）
+//   1) NEXT_PUBLIC_APP_URL が最優先（末尾スラ無し）
+//   2) 互換のため NEXT_PUBLIC_BASE_URL も許容
+//   3) いずれも無ければ localhost
 // ------------------------------------------------------------
-export const REPORT_URL =
-  process.env.NEXT_PUBLIC_BASE_URL
-    ? `${process.env.NEXT_PUBLIC_BASE_URL}/report`
-    : 'http://localhost:3000/report';
+const APP_BASE = (
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.NEXT_PUBLIC_BASE_URL ||
+  'http://localhost:3000'
+).replace(/\/$/, '');
+
+export const REPORT_URL = `${APP_BASE}/report`;
 
 // ------------------------------------------------------------
 // 予約URL（旧API名: bookingUrlFor）
+//   - 互換のため NEXT_PUBLIC_BOOKING_URL を優先
+//   - 無ければ /consult を組み立て
+//   - email を付与（旧コードが期待）
 // ------------------------------------------------------------
-export function bookingUrlFor(email: string) {
+export function bookingUrlFor(email?: string) {
   const base =
-    process.env.NEXT_PUBLIC_BOOKING_URL || 'http://localhost:3000/consult';
+    (process.env.NEXT_PUBLIC_BOOKING_URL || `${APP_BASE}/consult`).trim();
   const u = new URL(base);
   if (email) u.searchParams.set('email', email);
   return u.toString();
 }
 
 // ------------------------------------------------------------
-// 相談系（互換用）
+// 相談系（互換用・簡易）
 // ------------------------------------------------------------
 export type Consultant = {
   name?: string;
@@ -76,9 +86,9 @@ export function buildConsultEmail(input: Consultant): MailRender {
 }
 
 // ------------------------------------------------------------
-// 詳細レポート（本丸）
-//  ※ buildReportEmail は最低限の型＋安定実装。
-//    レポート本文のデザインは、必要に応じてここで発展可。
+// 詳細レポート（簡易版 = 既存互換）
+//   - デザイン最小限・分岐なし
+//   - V2 の高度版は下で再エクスポート（buildReportEmailV2）
 // ------------------------------------------------------------
 export type ReportEmailInput = {
   /** レポートID（rid） */
@@ -87,25 +97,26 @@ export type ReportEmailInput = {
   typeName?: string;
   /** レポートURL（未指定なら REPORT_URL + /[id]） */
   reportUrl?: string;
-  /** 受信者メール（任意：CTA生成などに使用） */
+  /** 受信者メール（任意：旧コード互換で CTA 生成に使用） */
   email?: string;
-  /** 件名プリフィックス調整など（任意） */
-  titlePrefix?: string; // 既定: 【武将タイプ診断】
+  /** 件名プリフィックス（任意、既定: 【武将タイプ診断】） */
+  titlePrefix?: string;
 };
 
 export function buildReportEmail(input: ReportEmailInput): MailRender {
   const rid = input.id ?? 'unknown-id';
   const typeName = input.typeName ?? '（タイプ判定中）';
   const prefix = input.titlePrefix ?? '【武将タイプ診断】';
+
   const url =
     input.reportUrl ??
-    (rid && REPORT_URL ? `${REPORT_URL}/${encodeURIComponent(rid)}` : REPORT_URL);
+    (rid ? `${REPORT_URL}/${encodeURIComponent(rid)}` : REPORT_URL);
 
   const subject = `${prefix} ▶ ${typeName} ｜ ■詳細レポートのご案内（シェア歓迎） （ID: ${rid}）`;
 
   const html = `
     <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji','Segoe UI Emoji'; line-height:1.7; color:#111;">
-      <p>${'SACHIKOさん' /* ここはAPI側で差し込んでOK */}、こんにちは。IOT（企業の未来づくり研究所）です。</p>
+      <p>${'SACHIKOさん' /* 宛名はAPI側で差し込みOK */}、こんにちは。IOT（企業の未来づくり研究所）です。</p>
       <p>診断の詳細レポートが整いました。以下よりご確認ください。</p>
 
       <p style="margin:20px 0;">
@@ -117,14 +128,15 @@ export function buildReportEmail(input: ReportEmailInput): MailRender {
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0;" />
 
       <p><strong>🌟50名以下の経営者の皆さまへ</strong><br/>
-      診断アプリのご紹介にご協力ください（経営者仲間やSNSでのシェア・拡散をお願いします）。</p>
+        診断アプリのご紹介にご協力ください（経営者仲間やSNSでのシェア・拡散をお願いします）。</p>
 
       <p style="margin-top:12px;">
         <strong>🌟51名以上の経営者の皆さまへ</strong><br/>
-        詳細レポート特典として、<u>無料個別相談</u>をご案内しています。
-      </p>
+        詳細レポート特典として、<u>無料個別相談</u>をご案内しています。</p>
 
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0;" />
+      <p>ご不明点があれば、このメールに<strong>そのまま返信</strong>してください。</p>
+
       <p style="font-size:12px;color:#555;">
         本メールは IOT（企業の未来づくり研究所）の診断サービスより自動送信されています。<br/>
         本件に心当たりがない場合はお手数ですが本メールへ返信ください。
@@ -140,7 +152,8 @@ export function buildReportEmail(input: ReportEmailInput): MailRender {
     `${subject}\n\n` +
     `レポートURL: ${url}\n\n` +
     `50名以下の経営者の皆さまへ: 診断アプリのご紹介にご協力ください（経営者仲間やSNSでのシェア・拡散）。\n` +
-    `51名以上の経営者の皆さまへ: 詳細レポート特典「無料個別相談」のご案内。`;
+    `51名以上の経営者の皆さまへ: 詳細レポート特典「無料個別相談」のご案内。\n` +
+    `\nご不明点はこのメールにそのまま返信してください。`;
 
   return { subject, html, text };
 }
@@ -148,5 +161,13 @@ export function buildReportEmail(input: ReportEmailInput): MailRender {
 // 互換性のための再エクスポート形式も提供（過去の import 先が同名でもOK）
 export { buildReportEmail as _buildReportEmail };
 
-// デフォルトは本丸
+// デフォルトは互換の簡易版
 export default buildReportEmail;
+
+// ------------------------------------------------------------
+// V2（拡張版）の再エクスポート
+//   app 側は `import { buildReportEmailV2, type ReportEmailV2Input } from '@/lib/emailTemplates'`
+//   と書くだけで OK
+// ------------------------------------------------------------
+export { buildReportEmailV2 } from './emailTemplatesV2';
+export type { ReportEmailV2Input } from './emailTemplatesV2';

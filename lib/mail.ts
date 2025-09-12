@@ -1,15 +1,18 @@
 // /lib/mail.ts
-import baseSendMail, { sendMail as sendMailObj, type SendMailOptions } from './mailer';
+import { sendMail as coreSendMail, type SendMailOptions } from './mailer';
 
-/** レガシー互換: 4引数 or オブジェクトの両対応 */
-async function sendMail(...args: any[]) {
+// 呼び出しシグネチャ（型オーバーロード）
+export function sendMail(to: string, subject: string, html: string, text?: string): Promise<unknown>;
+export function sendMail(opts: SendMailOptions): Promise<unknown>;
+export async function sendMail(...args: any[]) {
+  // 旧式: sendMail(to, subject, html, text?)
   if (typeof args[0] === 'string') {
     const [to, subject, html, text] = args as [string, string, string, string?];
-    return sendMailObj({ to, subject, html, text });
+    return coreSendMail({ to, subject, html, text });
   }
+  // 新式: sendMail({ to, subject, html, ... })
   const opts = args[0] as SendMailOptions;
-  return sendMailObj(opts);
+  return coreSendMail(opts);
 }
 
-export { sendMail };
 export default sendMail;
