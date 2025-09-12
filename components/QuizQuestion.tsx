@@ -1,3 +1,4 @@
+// components/QuizQuestion.tsx
 'use client';
 
 import React, { useMemo, useRef } from 'react';
@@ -11,26 +12,20 @@ type Props = {
   totalQuestions: number;
   progressPercentage: number;
   noteText: string;
-  questionText: string;        // 先頭に旧「Qxx.」が入っていてもOK（後で剥がす）
+  questionText: string;        // 旧「Qxx.」が残っていてもOK（下で剥がす）
   options: Option[];
   selectedAnswers: string[];
   isMultipleChoice: boolean;
   onAnswerChange: (value: string) => void;
-  onNext: () => void;
+  onNext: () => void | Promise<void>;   // ← 親の集計は async を許容
   onPrev: () => void;
   canGoBack: boolean;
 };
 
 const MAX_MULTI = 3;
-
-// 旧「Q12.」「Q12．」などを剥がす（全角ドット対応）
-function stripLeadingQNumber(s: string) {
-  return String(s ?? '').replace(/^Q\s*\d+\s*[\.．]?\s*/i, '').trim();
-}
-
-function getLabel(opt: Option) {
-  return typeof opt === 'string' ? opt : (opt.text ?? '');
-}
+const stripLeadingQNumber = (s: string) =>
+  String(s ?? '').replace(/^Q\s*\d+\s*[\.．]?\s*/i, '').trim();
+const getLabel = (opt: Option) => (typeof opt === 'string' ? opt : (opt.text ?? ''));
 
 export default function QuizQuestion(props: Props) {
   const {
@@ -40,11 +35,10 @@ export default function QuizQuestion(props: Props) {
   } = props;
 
   const router = useRouter();
-  const wrapRef = useRef<HTMLHeadingElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
 
   const answered = selectedAnswers.length > 0;
   const isLast = questionNumber >= totalQuestions;
-
   const displayTitle = `Q${questionNumber}. ${stripLeadingQNumber(questionText)}`;
 
   const helper = useMemo(() => {
@@ -54,23 +48,26 @@ export default function QuizQuestion(props: Props) {
       : 'どれか1つ選んでください';
   }, [answered, isMultipleChoice]);
 
-  function handleNext() {
+  async function handleNext() {
     if (!answered) {
-      wrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      titleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    // ★最後の設問は必ず結果へ（親の改修なしで解決）
+
+    // ★ 親（app/page.tsx）の集計・保存が完了するまで必ず待つ
+    await Promise.resolve(onNext());
+
+    // ★ 最終問のときだけ結果ページへ（少しだけ猶予を置く）
     if (isLast) {
-      router.push('/result'); // ← 実際の結果ページパスに合わせて変更
-      return;
+      setTimeout(() => router.push('/result'), 30);
     }
-    onNext();
+    // それ以外は親onNextが次の設問に進めるので何もしない
   }
 
   return (
     <div className="min-h-screen bg-white text-black px-4 py-10">
       <div className="mx-auto max-w-3xl">
-        {/* 進捗（表示順ベース） */}
+        {/* 進捗 */}
         <div className="mb-4 text-sm text-gray-600 flex items-center justify-between">
           <span>Q{questionNumber} / {totalQuestions}</span>
           <div className="w-40 h-2 bg-gray-200 rounded">
@@ -78,11 +75,9 @@ export default function QuizQuestion(props: Props) {
           </div>
         </div>
 
-        {/* 説明ノート */}
         {noteText && <p className="text-xs text-gray-500 mb-2">{noteText}</p>}
 
-        {/* 質問文（番号はここで付け直す） */}
-        <h2 ref={wrapRef} className="text-xl font-bold mb-4 leading-relaxed">
+        <h2 ref={titleRef} className="text-xl font-bold mb-4 leading-relaxed">
           {displayTitle}
         </h2>
 
@@ -94,12 +89,11 @@ export default function QuizQuestion(props: Props) {
             const checked = selectedAnswers.includes(label);
 
             const onChange = () => {
-              // 複数選択は最大数を超えないようにクライアント側でもガード
               if (isMultipleChoice) {
                 const willSelect = !checked;
                 if (willSelect && selectedAnswers.length >= MAX_MULTI) {
-                  wrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  return; // これ以上は追加しない
+                  titleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  return;
                 }
               }
               onAnswerChange(label);
@@ -126,30 +120,16 @@ export default function QuizQuestion(props: Props) {
           })}
         </div>
 
-        {/* 補助メッセージ */}
         {!answered && <p className="text-sm text-amber-700 mb-3">{helper}</p>}
         {isMultipleChoice && selectedAnswers.length >= MAX_MULTI && (
           <p className="text-xs text-amber-700 mb-3">※ 選択は最大{MAX_MULTI}つまでです</p>
         )}
 
-        {/* 操作 */}
         <div className="flex items-center justify-between gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onPrev}
-            disabled={!canGoBack}
-            className="rounded-xl"
-          >
+          <Button type="button" variant="outline" onClick={onPrev} disabled={!canGoBack} className="rounded-xl">
             戻る
           </Button>
-          <Button
-            type="button"
-            onClick={handleNext}
-            disabled={!answered}
-            className="rounded-xl disabled:opacity-50"
-            aria-disabled={!answered}
-          >
+          <Button type="button" onClick={handleNext} disabled={!answered} className="rounded-xl disabled:opacity-50" aria-disabled={!answered}>
             {isLast ? '結果を見る' : '次へ'}
           </Button>
         </div>
