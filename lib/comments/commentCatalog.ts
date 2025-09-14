@@ -1,4 +1,4 @@
-// src/lib/comments/commentCatalog.ts  (6カテゴリのテンプレ倉庫（強み/改善/ヒント、${leader} などを展開）)
+// lib/comments/commentCatalog.ts  (6カテゴリのテンプレ倉庫（強み/改善/ヒント、${leader} などを展開）)
 export type CategoryKey =
   | "delegation"
   | "org_inhibition"

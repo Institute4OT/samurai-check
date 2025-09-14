@@ -2,195 +2,266 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+
 import StartScreen from '@/components/StartScreen';
 import QuizQuestion from '@/components/QuizQuestion';
-import { quizQuestions, QuizQuestion as QuizQuestionType } from '@/lib/quizQuestions';
-import { shuffleArray } from '@/lib/utils';
-
-// 2引数: (pattern, answers)
-import { debugScoreCalculation } from '@/lib/scoringSystem';
-
-// 型（Normalized 使用）
-import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
-import { judgeSamuraiType } from '@/lib/samuraiJudge';
-
-import { supabase, SamuraiResult } from '@/lib/supabase';
-import { generateScoreComments } from '@/lib/generateScoreComments';
-import { DISPLAY_ORDER, blockTitleByFirstPosition } from '@/lib/quizBlocks';
 import ResultPanel from '@/components/result/ResultPanel';
+
+import { quizQuestions, type QuizQuestion as QuizQuestionType } from '@/lib/quizQuestions';
+import { shuffleArray } from '@/lib/utils';
+import { DISPLAY_ORDER, blockTitleByFirstPosition } from '@/lib/quizBlocks';
+
+import {
+  calculateCategoryScores,
+  type ScoreMap,
+} from '@/lib/scoringSystem';
+import { judgeSamuraiType } from '@/lib/samuraiJudge';
+import { supabase, type SamuraiResult } from '@/lib/supabase';
+import generateScoreComments from '@/lib/generateScoreComments';
+
+import { clamp03 } from '@/lib/scoreSnapshot';
+import type { NormalizedCategoryScores, SamuraiType, ScorePattern } from '@/types/diagnosis';
 
 /* ================= ユーティリティ ================= */
 
 const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
 
+// localStorage セーフ書き込み（例外を無視）
+function safeSet(key: string, v: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {}
+}
+
+// QID（数値）→ "Q1" などに整形
+const toQid = (id: number) => `Q${id}` as const;
+
+// ──────────────────────────────────────────────
+// ★ 型エラー回避：内部構築は汎用マップで行い、最後に ScoreMap へキャスト
+type AnyScoreMap = Record<string, Record<string, number>>;
+
+// quizQuestions から ScoreMap を生成
+function buildScoreMap(questions: QuizQuestionType[]): ScoreMap {
+  const map: AnyScoreMap = {};
+  for (const q of questions) {
+    const qkey = `Q${q.id}`;
+    const inner: Record<string, number> = {};
+    for (const opt of q.options) {
+      const label =
+        typeof (opt as any)?.text === 'string' ? (opt as any).text : String(opt);
+      const score =
+        typeof (opt as any)?.score === 'number' ? (opt as any).score : 0;
+      inner[label] = score;
+    }
+    map[qkey] = inner;
+  }
+  return map as unknown as ScoreMap;
+}
+
+// 回答配列から ScorePattern を作る（複数選択は“最高スコアの選択肢”を採用）
+function buildScorePattern(
+  answers: { questionId: number; selectedAnswers: string[] }[],
+  scoreMap: ScoreMap
+): ScorePattern {
+  const anyMap = scoreMap as unknown as AnyScoreMap;
+  const pattern: Record<string, string> = {};
+  for (const a of answers) {
+    const qkey = `Q${a.questionId}`;
+    const m = anyMap[qkey] || {};
+    let chosen = a.selectedAnswers[0] ?? '';
+    let max = -1;
+    for (const txt of a.selectedAnswers) {
+      const s = Number(m[txt] ?? -1);
+      if (s > max) {
+        max = s;
+        chosen = txt;
+      }
+    }
+    pattern[qkey] = String(chosen ?? '');
+  }
+  return pattern as ScorePattern;
+}
+
 /* ======================= 画面本体 ======================= */
 
 export default function Home() {
-  const [currentStep, setCurrentStep] = useState<'start' | `q${number}` | 'result'>('start');
-  const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
-  const [shuffledQuestions, setShuffledQuestions] = useState<QuizQuestionType[]>([]);
-  const [allAnswers, setAllAnswers] = useState<{ questionId: number; selectedAnswers: string[] }[]>([]);
+  const [step, setStep] = useState<'start' | `q${number}` | 'result'>('start');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [orderedQuestions, setOrderedQuestions] = useState<QuizQuestionType[]>([]);
+
+  const [answers, setAnswers] = useState<{ questionId: number; selectedAnswers: string[] }[]>([]);
   const [finalScores, setFinalScores] = useState<NormalizedCategoryScores | null>(null);
   const [samuraiType, setSamuraiType] = useState<SamuraiType | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [generatedComments, setGeneratedComments] =
-    useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
+  const [comments, setComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
+  const [rid, setRid] = useState<string | null>(null);
 
   // ❶ 表示順に並び替えた設問（選択肢だけランダム）
-  const orderedQuestions = useMemo<QuizQuestionType[]>(() => {
+  const computedOrdered = useMemo<QuizQuestionType[]>(() => {
     const byId = new Map(quizQuestions.map((q) => [q.id, q]));
     return DISPLAY_ORDER
       .map((id) => byId.get(id))
       .filter((q): q is QuizQuestionType => Boolean(q))
       .map((q) => ({ ...q, options: shuffleArray(q.options) }));
   }, []);
+  useEffect(() => setOrderedQuestions(computedOrdered), [computedOrdered]);
 
-  useEffect(() => {
-    setShuffledQuestions(orderedQuestions);
-  }, [orderedQuestions]);
+  // ❷ スコアマップを一度だけ構築
+  const scoreMap = useMemo<ScoreMap>(() => buildScoreMap(quizQuestions), []);
 
-  // Supabase へ結果保存（行の作成まで。確定は ResultPanel 内の FinalizeOnMount）
-  const saveResultsToSupabase = async (
-    scores: NormalizedCategoryScores,
-    judgedType: SamuraiType,
-    answers: { questionId: number; selectedAnswers: string[] }[],
-  ) => {
+  const startQuiz = () => {
+    setStep('q1');
+    setSelected([]);
+    setAnswers([]);
+    setFinalScores(null);
+    setSamuraiType(null);
+    setComments({ strengths: [], tips: [] });
+    setRid(null);
+  };
+
+  // Supabaseへ“行だけ”作成（失敗しても画面は進める）
+  async function createRowInSupabase(snapshot: Record<string, string[]>, typeDisplay: string) {
     try {
       const generatedUserId =
         globalThis.crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-      // FinalizeOnMount へも渡せるスナップショット
-      const scorePattern: Record<string, string[]> = Object.fromEntries(
-        answers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
-      );
-
-      const resultData: Partial<SamuraiResult> & Record<string, any> = {
+      const payload: Partial<SamuraiResult> & Record<string, any> = {
         id: generatedUserId,
-        score_pattern: scorePattern,      // 回答スナップショット（監査用）
-        samurai_type: String(judgedType), // 旧列（互換用）。確定は Finalize API
+        score_pattern: snapshot,        // 回答スナップショット（監査用）
+        samurai_type: typeDisplay ?? '', // 旧互換列（Finalizeで上書きされてもOK）
         name: null,
         email: null,
         company_size: null,
       };
 
-      const { error } = await supabase.from('samurairesults').insert(resultData);
+      const { error } = await supabase.from('samurairesults').insert(payload).select();
       if (error) {
-        // ここは表示に影響しないので、ログだけ
-        console.warn('Error saving results to Supabase:', error);
+        // ここは失敗しても UX を止めない（ResultPanel 側で finalize を再試行）
+        // eslint-disable-next-line no-console
+        console.warn('[supabase.insert] failed:', error);
       } else {
-        setUserId(generatedUserId);
+        setRid(generatedUserId);
+        try {
+          localStorage.setItem('samurai:rid', generatedUserId);
+          sessionStorage.setItem('samurai:rid', generatedUserId);
+          document.cookie = `samurai_rid=${encodeURIComponent(generatedUserId)}; Path=/; Max-Age=1800; SameSite=Lax`;
+        } catch {}
       }
-    } catch (error) {
-      console.warn('Error generating UUID or saving to Supabase:', error);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[supabase.insert] exception:', e);
     }
-  };
+  }
 
-  const startQuiz = () => {
-    setCurrentStep('q1');
-    setSelectedAnswers([]);
-    setAllAnswers([]);
-    setFinalScores(null);
-    setSamuraiType(null);
-    setUserId(null);
-  };
-
+  // 最終計算 → 保存 → 画面遷移
   const nextQuestion = async () => {
-    const currentPos = parseInt(String(currentStep).replace('q', ''), 10);
-    const currentQuestion = shuffledQuestions[currentPos - 1];
-    if (!currentQuestion) return;
+    const pos = parseInt(String(step).replace('q', ''), 10);
+    const q = orderedQuestions[pos - 1];
+    if (!q) return;
 
-    // ★ 未回答ガード
-    if (selectedAnswers.length === 0) {
+    // 未回答ガード（UIの disabled に加え二重防御）
+    if (selected.length === 0) {
       alert('少なくとも1つは選んでください。');
       return;
     }
 
-    const newAnswer = { questionId: currentQuestion.id, selectedAnswers: [...selectedAnswers] };
-    const updatedAllAnswers = [...allAnswers, newAnswer];
-    setAllAnswers(updatedAllAnswers);
+    const newAnswer = { questionId: q.id, selectedAnswers: [...selected] };
+    const updated = [...answers, newAnswer];
+    setAnswers(updated);
 
-    if (currentPos < shuffledQuestions.length) {
-      setCurrentStep(`q${currentPos + 1}` as `q${number}`);
-    } else {
-      // ===== 最終計算 =====
-
-      // 1) ScorePattern を作る（Q1→選択肢...）
-      const pattern: Record<string, string[]> = Object.fromEntries(
-        updatedAllAnswers.map(a => [`Q${a.questionId}`, a.selectedAnswers]),
-      );
-
-      // 2) 正規化スコアを算出（2引数必須）
-      const scores = debugScoreCalculation(pattern, updatedAllAnswers) as NormalizedCategoryScores;
-      setFinalScores(scores);
-
-      // 3) タイプ判定
-      const judged = judgeSamuraiType(scores);
-      setSamuraiType(judged);
-
-      // 4) コメント生成（型差がある環境でも安全に通す）
-      const comments = generateScoreComments(scores as unknown as any);
-      setGeneratedComments(comments);
-
-      // 5) Supabase「行だけ」生成（失敗してもUIは続行）
-      await saveResultsToSupabase(scores, judged, updatedAllAnswers);
-
-      // 6) ★★★ /result ページが読むスナップショットを localStorage へ保存 ★★★
-      try {
-        localStorage.setItem('samurai-final-scores', JSON.stringify(scores));
-        localStorage.setItem('samurai-type', JSON.stringify(String(judged)));
-        localStorage.setItem('samurai-comments', JSON.stringify(comments));
-        localStorage.setItem('samurai-score-pattern', JSON.stringify(pattern));
-      } catch {
-        /* storage 不可でも落ちないよう握りつぶし */
-      }
-
-      // 7) 旧フローのフォールバック（/result に遷移しない場合も一応表示できるように）
-      setCurrentStep('result');
+    // まだ続きがある
+    if (pos < orderedQuestions.length) {
+      setStep(`q${pos + 1}` as `q${number}`);
+      setSelected([]);
+      return;
     }
 
-    setSelectedAnswers([]);
+    // ===== ここから最終処理 =====
+
+    // 1) 監査用スナップショット（Q→選択肢[]）
+    const snapshot: Record<string, string[]> = {};
+    updated.forEach((a) => (snapshot[`Q${a.questionId}`] = a.selectedAnswers));
+    // ★ 必ずローカルにも保存（/result 直アクセス・Finalize送信用）
+    safeSet('samurai-score-pattern', snapshot);
+
+    // 2) スコア計算（選択肢テキスト→スコア）
+    const pattern = buildScorePattern(updated, scoreMap);
+    const result = calculateCategoryScores(pattern, scoreMap, { normalizeMode: 'auto', maxPerQuestion: 3 });
+
+    // 正規化 0〜3
+    const normalized = result.normalized as NormalizedCategoryScores;
+
+    // judge 用は英語キーのままでOK
+    const typeDisplay = String(judgeSamuraiType(normalized) ?? '');
+
+    // コメント生成は“日本語ラベル”で渡すと安全
+    const commentSource: Record<string, number> = {
+      '権限委譲・構造健全度': clamp03(normalized.delegation),
+      '組織進化阻害': clamp03(normalized.orgDrag),
+      'コミュ力誤差': clamp03(normalized.commGap),
+      'アップデート力': clamp03(normalized.updatePower),
+      'ジェネギャップ感覚': clamp03(normalized.genGap),
+      '無自覚ハラスメント傾向': clamp03((normalized as any).harassmentAwareness ?? (normalized as any).harassmentRisk ?? 0),
+    };
+    const cmts = generateScoreComments(commentSource);
+
+    // 3) 画面状態を反映
+    setFinalScores(normalized);
+    setSamuraiType(typeDisplay as unknown as SamuraiType);
+    setComments(cmts);
+
+    // 4) /result 直アクセス対策でローカル保存も
+    safeSet('samurai-final-scores', normalized);
+    safeSet('samurai-type', typeDisplay);
+    safeSet('samurai-comments', cmts);
+
+    // 5) Supabase に“行だけ”作成（失敗しても続行）
+    createRowInSupabase(snapshot, typeDisplay);
+
+    // 6) 画面遷移
+    setStep('result');
+    setSelected([]);
   };
 
   const prevQuestion = () => {
-    const currentPos = parseInt(String(currentStep).replace('q', ''), 10);
-    if (currentPos > 1) {
-      const prevQuestion = shuffledQuestions[currentPos - 2];
-      setCurrentStep(`q${currentPos - 1}` as `q${number}`);
-      if (prevQuestion) {
-        const prevStored = allAnswers.find((a) => a.questionId === prevQuestion.id);
-        setSelectedAnswers(prevStored ? [...prevStored.selectedAnswers] : []);
-        setAllAnswers(allAnswers.filter((a) => a.questionId !== prevQuestion.id));
-      } else {
-        setSelectedAnswers([]);
-      }
+    const pos = parseInt(String(step).replace('q', ''), 10);
+    if (pos <= 1) return;
+    const prevQ = orderedQuestions[pos - 2];
+    setStep(`q${pos - 1}` as `q${number}`);
+    if (!prevQ) {
+      setSelected([]);
+      return;
     }
+    const prevStored = answers.find((a) => a.questionId === prevQ.id);
+    setSelected(prevStored ? [...prevStored.selectedAnswers] : []);
+    setAnswers(answers.filter((a) => a.questionId !== prevQ.id));
   };
 
   // ===== スタート画面 =====
-  if (currentStep === 'start') return <StartScreen startQuiz={startQuiz} />;
+  if (step === 'start') return <StartScreen startQuiz={startQuiz} />;
 
-  // ===== 結果画面（フォールバック表示） =====
-  if (currentStep === 'result') {
+  // ===== 結果画面 =====
+  if (step === 'result') {
     return (
       <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
         <ResultPanel
-          rid={userId ?? ''}
-          finalScores={finalScores as unknown as Record<string, unknown> | null}
-          samuraiType={(samuraiType ?? '') as unknown as string}
-          comments={generatedComments}
-          onRestart={startQuiz}
+          rid={rid ?? ''}
+          finalScores={finalScores as unknown as NormalizedCategoryScores}
+          samuraiType={samuraiType as unknown as string}
+          comments={comments}
+          scorePattern={null /* ResultPanel側で localStorage からも読むため省略可 */}
+          onRestart={() => { setStep('start'); }}
         />
       </div>
     );
   }
 
   // ===== 質問画面（q1, q2, ...） =====
-  if (String(currentStep).startsWith('q')) {
-    const position = parseInt(String(currentStep).replace('q', ''), 10);
-    const currentQuestion = shuffledQuestions[position - 1];
-    const total = shuffledQuestions.length;
+  if (String(step).startsWith('q')) {
+    const pos = parseInt(String(step).replace('q', ''), 10);
+    const q = orderedQuestions[pos - 1];
+    const total = orderedQuestions.length;
 
-    if (!currentQuestion) {
+    if (!q) {
       return (
         <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
           <div className="text-center">
@@ -201,35 +272,40 @@ export default function Home() {
       );
     }
 
-    const blockTitle = blockTitleByFirstPosition[position];
-    const progress = Math.round((position / total) * 100);
+    const blockTitle = (blockTitleByFirstPosition as any)[pos];
+    const progress = Math.round((pos / total) * 100);
 
     return (
       <QuizQuestion
-        questionNumber={position}
+        questionNumber={pos}
         totalQuestions={total}
         progressPercentage={progress}
         noteText={blockTitle}
-        questionText={currentQuestion.questionText}
-        options={currentQuestion.options}
-        selectedAnswers={selectedAnswers}
-        isMultipleChoice={currentQuestion.isMultipleChoice}
+        questionText={q.questionText}
+        options={q.options as any}
+        selectedAnswers={selected}
+        isMultipleChoice={q.isMultipleChoice}
         onAnswerChange={
-          currentQuestion.isMultipleChoice
-            ? (v) =>
-                setSelectedAnswers((prev) => {
-                  const isNone = NONE_LABELS.has(v);
-                  if (prev.includes(v)) return prev.filter((x) => x !== v);
-                  if (isNone) return [v];
+          q.isMultipleChoice
+            ? (v) => {
+                setSelected((prev) => {
+                  // 「該当なし」を選ぶと他を外す
+                  if (NONE_LABELS.has(v)) return [v];
                   const withoutNone = prev.filter((x) => !NONE_LABELS.has(x));
+                  const exists = withoutNone.includes(v);
+                  if (exists) {
+                    return withoutNone.filter((x) => x !== v);
+                  }
+                  // 最大3つまで
                   if (withoutNone.length >= 3) return withoutNone;
                   return [...withoutNone, v];
-                })
-            : (v) => setSelectedAnswers([v])
+                });
+              }
+            : (v) => setSelected([v])
         }
         onNext={nextQuestion}
         onPrev={prevQuestion}
-        canGoBack={position > 1}
+        canGoBack={pos > 1}
       />
     );
   }

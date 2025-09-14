@@ -6,7 +6,7 @@ import { buildReportEmailV2, type ReportEmailV2Input } from '@/lib/emailTemplate
 
 export const runtime = 'nodejs';
 
-/* ========== 小ユーティリティ ========== */
+/* ========== helper ========== */
 const ok  = (data: any, status = 200) => NextResponse.json(data, { status });
 const err = (message: string, status = 400) =>
   NextResponse.json({ ok: false, error: message }, { status });
@@ -18,39 +18,21 @@ function originFrom(req: NextRequest) {
   return `${u.protocol}//${u.host}`;
 }
 
-function param(payload: Record<string, any>, ...candidates: string[]) {
-  for (const k of candidates) {
+function param(payload: Record<string, any>, ...cands: string[]) {
+  for (const k of cands) {
     const v = payload?.[k];
     if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
   }
   return '';
 }
 
-async function readPayload(req: NextRequest): Promise<Record<string, any>> {
-  const ct = req.headers.get('content-type') || '';
-  if (ct.includes('application/json')) {
-    try { return await req.json(); } catch { return {}; }
-  }
-  if (ct.includes('application/x-www-form-urlencoded')) {
-    const txt = await req.text();
-    return Object.fromEntries(new URLSearchParams(txt));
-  }
-  if (ct.includes('multipart/form-data')) {
-    const fd = await req.formData();
-    const obj: Record<string, any> = {};
-    fd.forEach((v, k) => { obj[k] = typeof v === 'string' ? v : ''; });
-    return obj;
-  }
-  // クエリも許容
-  return Object.fromEntries(req.nextUrl.searchParams.entries());
-}
-
+// rid を UTM, rid クエリに埋め込む
 function addUtm(url: string, content: string, extra?: Record<string, string | undefined>) {
   try {
     const u = new URL(url);
-    u.searchParams.set('utm_source', 'email');
-    u.searchParams.set('utm_medium', 'transactional');
-    u.searchParams.set('utm_campaign', 'report_v2');
+    u.searchParams.set('utm_source', 'samurai-check');
+    u.searchParams.set('utm_medium', 'email');
+    u.searchParams.set('utm_campaign', 'report_ready');
     u.searchParams.set('utm_content', content);
     if (extra) {
       for (const [k, v] of Object.entries(extra)) {
@@ -67,11 +49,9 @@ function buildLinks(req: NextRequest, rid?: string | null, overrides?: { report?
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim() || originFrom(req);
   const bookingBase = process.env.NEXT_PUBLIC_BOOKING_URL?.trim() || `${base}/consult`;
 
-  // 入力にURLが渡ってきていれば尊重、無ければ既定を作る
   const reportBase  = overrides?.report  || (rid ? `${base}/report/${encodeURIComponent(rid)}` : `${base}/report`);
   const consultBase = overrides?.consult || (rid ? `${bookingBase}?rid=${encodeURIComponent(rid)}` : bookingBase);
 
-  // UTM 付与（rid は utm_id としても付与）
   const utmExtra = { utm_id: rid || undefined };
   return {
     reportLink:  addUtm(reportBase,  'cta_report',  utmExtra),
@@ -79,40 +59,46 @@ function buildLinks(req: NextRequest, rid?: string | null, overrides?: { report?
   };
 }
 
+// 会社規模を 50 以下 / 51 以上の 2 区分に
+function is51Plus(size?: string | null) {
+  if (!size) return false;
+  const s = String(size).trim();
+  return /^(51-100|101-300|301-500|501-1000|1001\+)$/.test(s);
+}
+
 /* ========== Main ========== */
 export async function POST(req: NextRequest) {
   try {
-    const data = await readPayload(req);
+    // 1) 入力を吸収（snake/camel 両対応）
+    const body = await (async () => {
+      const ct = req.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return await req.json().catch(() => ({} as any));
+      if (ct.includes('multipart/form-data')) {
+        const fd = await req.formData();
+        const o: Record<string, any> = {};
+        fd.forEach((v, k) => { o[k] = typeof v === 'string' ? v : v.name; });
+        return o;
+      }
+      return Object.fromEntries(req.nextUrl.searchParams.entries());
+    })();
 
-    // 宛先メール
-    const email = param(data, 'email', 'to', 'recipient');
-    if (!email) return err('missing "email"');
-    if (!EMAIL_RE.test(email)) return err('invalid "email"');
+    const rid         = param(body, 'rid', 'resultId', 'id') || null;
+    const toName      = param(body, 'name', 'toName', 'userName') || 'ご担当者さま';
+    const email       = param(body, 'email', 'to');
+    const typeName    = param(body, 'samuraiType', 'typeName', 'type') || '（タイプ判定中）';
+    const companySize = param(body, 'company_size', 'companySize', 'size') || '';
+    const overrideReport  = param(body, 'reportLink', 'report_url');
+    const overrideConsult = param(body, 'consultLink', 'consult_url');
 
-    // 宛名（無ければメールのローカル部）
-    const toNameBase = param(data, 'userName', 'toName', 'recipientName') || email.split('@')[0];
-    const toName = toNameBase || 'お客様';
+    if (!EMAIL_RE.test(email)) return err('invalid_email', 400);
 
-    // タイプ／会社規模（キー揺れ吸収）
-    const typeName    = param(data, 'samuraiType', 'samurai_type', 'type') || 'unknown';
-    const companySize = param(data, 'companySize', 'company_size') || 'unknown';
+    // 2) リンク生成
+    const { reportLink, consultLink } = buildLinks(req, rid, {
+      report:  overrideReport  || undefined,
+      consult: overrideConsult || undefined,
+    });
 
-    // rid / diagId（どちらでも受ける）
-    const rid   = param(data, 'rid', 'resultId', 'id') || '';
-    const diagId = param(data, 'diagId', 'diagnosisId') || rid || '';
-
-    // URL 上書きがあれば取り込み
-    const overrideReport  = param(data, 'reportLink', 'reportUrl');
-    const overrideConsult = param(data, 'consultLink', 'bookingUrl');
-
-    // リンク生成（UTM 付与）
-    const { reportLink, consultLink } = buildLinks(
-      req,
-      rid || undefined,
-      { report: overrideReport || undefined, consult: overrideConsult || undefined }
-    );
-
-    // V2テンプレに合わせた入力
+    // 3) メール生成（51名以上は件名に“アプリ特典”を明示）
     const input: ReportEmailV2Input = {
       toName,
       typeName,
@@ -120,20 +106,20 @@ export async function POST(req: NextRequest) {
       companySize,
       reportLink,
       consultLink,
+      titlePrefix: is51Plus(companySize) ? '【武将タイプ診断アプリ特典】' : '【武将タイプ診断】',
     };
-
     const mail = buildReportEmailV2(input);
 
-    // 送信
+    // 4) 送信
     const dataRes = await sendMail({
       to: email,
       subject: mail.subject,
       html: mail.html,
       text: mail.text,
-      replyTo: process.env.MAIL_REPLY_TO || undefined,
-      tagId: `report_request:${diagId || 'na'}`,
-    });
+      tagId: rid || undefined,
+    } as any);
 
+    // 5) 返却
     return ok({
       ok: true,
       to: email,
