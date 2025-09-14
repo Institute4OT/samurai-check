@@ -20,29 +20,21 @@ import { supabase, type SamuraiResult } from '@/lib/supabase';
 import generateScoreComments from '@/lib/generateScoreComments';
 
 import { clamp03 } from '@/lib/scoreSnapshot';
-import type {
-  NormalizedCategoryScores,
-  SamuraiType,
-  ScorePattern,
-  QuestionId,
-} from '@/types/diagnosis';
+import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
 
 /* ================= ユーティリティ ================= */
 
 const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
 
+// localStorage セーフ書き込み（例外を無視）
 function safeSet(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
 }
 
-const ALL_QIDS: QuestionId[] = [
-  'Q1','Q2','Q3','Q4','Q5','Q6','Q7','Q8','Q9','Q10','Q11','Q12','Q13','Q14'
-];
-
-// ★ 内部構築は汎用マップ→最後に ScoreMap へキャスト（型エラー回避）
+// ★ 型エラー回避：内部構築は汎用マップ→最後に ScoreMap へキャスト
 type AnyScoreMap = Record<string, Record<string, number>>;
 
-/** quizQuestions → ScoreMap */
+// quizQuestions から ScoreMap を生成（選択肢の text と score を吸い上げ）
 function buildScoreMap(questions: QuizQuestionType[]): ScoreMap {
   const map: AnyScoreMap = {};
   for (const q of questions) {
@@ -58,34 +50,6 @@ function buildScoreMap(questions: QuizQuestionType[]): ScoreMap {
   return map as unknown as ScoreMap;
 }
 
-/** 回答配列 → “必ず Q1〜Q14 を含む” ScorePattern を作成（複数選択は最高スコアを採用） */
-function buildFullScorePattern(
-  answers: { questionId: number; selectedAnswers: string[] }[],
-  scoreMap: ScoreMap
-): ScorePattern {
-  const anyMap = scoreMap as unknown as AnyScoreMap;
-
-  // まず全QIDを '' で初期化
-  const pattern = ALL_QIDS.reduce<Record<QuestionId, string>>((acc, qid) => {
-    acc[qid] = '';
-    return acc;
-  }, {} as Record<QuestionId, string>);
-
-  for (const a of answers) {
-    const qkey = `Q${a.questionId}` as QuestionId;
-    const m = anyMap[qkey] || {};
-    // 選択肢のうちスコア最大のラベルを採用（同点なら先に選んだ方）
-    let chosen = a.selectedAnswers[0] ?? '';
-    let max = -1;
-    for (const txt of a.selectedAnswers) {
-      const s = Number(m[txt] ?? -1);
-      if (s > max) { max = s; chosen = txt; }
-    }
-    pattern[qkey] = String(chosen ?? '');
-  }
-  return pattern as ScorePattern;
-}
-
 /* ======================= 画面本体 ======================= */
 
 export default function Home() {
@@ -99,7 +63,7 @@ export default function Home() {
   const [comments, setComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
   const [rid, setRid] = useState<string | null>(null);
 
-  // ❶ 表示順（選択肢はランダム）
+  // ❶ 表示順に並び替え（設問順はDISPLAY_ORDER、選択肢だけシャッフル）
   const computedOrdered = useMemo<QuizQuestionType[]>(() => {
     const byId = new Map(quizQuestions.map((q) => [q.id, q]));
     return DISPLAY_ORDER
@@ -130,8 +94,8 @@ export default function Home() {
 
       const payload: Partial<SamuraiResult> & Record<string, any> = {
         id: generatedUserId,
-        score_pattern: snapshot,
-        samurai_type: typeDisplay ?? '',
+        score_pattern: snapshot,         // 回答スナップショット（監査用）
+        samurai_type: typeDisplay ?? '', // 旧互換列（Finalizeで上書きされてもOK）
         name: null,
         email: null,
         company_size: null,
@@ -139,6 +103,7 @@ export default function Home() {
 
       const { error } = await supabase.from('samurairesults').insert(payload).select();
       if (error) {
+        // UXは止めない
         console.warn('[supabase.insert] failed:', error);
       } else {
         setRid(generatedUserId);
@@ -159,6 +124,7 @@ export default function Home() {
     const q = orderedQuestions[pos - 1];
     if (!q) return;
 
+    // 未回答ガード（UIの disabled に加え二重防御）
     if (selected.length === 0) {
       alert('少なくとも1つは選んでください。');
       return;
@@ -168,6 +134,7 @@ export default function Home() {
     const updated = [...answers, newAnswer];
     setAnswers(updated);
 
+    // まだ続くなら次の設問へ
     if (pos < orderedQuestions.length) {
       setStep(`q${pos + 1}` as `q${number}`);
       setSelected([]);
@@ -182,18 +149,18 @@ export default function Home() {
     // ★ Finalize 用にも保存
     safeSet('samurai-score-pattern', snapshot);
 
-    // 2) スコア計算：配列→“完全な ScorePattern”→ calculateCategoryScores
-    const pattern: ScorePattern = buildFullScorePattern(updated, scoreMap);
-    const result = calculateCategoryScores(pattern, scoreMap, {
-      normalizeMode: 'auto',
-      maxPerQuestion: 3,
-    });
+    // 2) スコア計算：answers配列をそのまま渡す（実装は forEach を使うため）
+    const result = calculateCategoryScores(
+      updated as unknown as any, // ← 型はScorePatternだが実装はanswers配列を期待。ここで明示キャスト。
+      scoreMap,
+      { normalizeMode: 'auto', maxPerQuestion: 3 }
+    );
 
     // 3) 正規化 0〜3 & タイプ判定
     const normalized = result.normalized as NormalizedCategoryScores;
     const typeDisplay = String(judgeSamuraiType(normalized) ?? '');
 
-    // 4) コメント生成（日本語ラベルを渡す）
+    // 4) コメント生成（日本語ラベルで渡す）
     const commentSource: Record<string, number> = {
       '権限委譲・構造健全度': clamp03(normalized.delegation),
       '組織進化阻害': clamp03(normalized.orgDrag),
@@ -236,8 +203,10 @@ export default function Home() {
     setAnswers(answers.filter((a) => a.questionId !== prevQ.id));
   };
 
+  // ===== スタート画面 =====
   if (step === 'start') return <StartScreen startQuiz={startQuiz} />;
 
+  // ===== 結果画面 =====
   if (step === 'result') {
     return (
       <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
@@ -253,6 +222,7 @@ export default function Home() {
     );
   }
 
+  // ===== 質問画面（q1, q2, ...） =====
   if (String(step).startsWith('q')) {
     const pos = parseInt(String(step).replace('q', ''), 10);
     const q = orderedQuestions[pos - 1];
@@ -286,11 +256,13 @@ export default function Home() {
           q.isMultipleChoice
             ? (v) => {
                 setSelected((prev) => {
-                  if (NONE_LABELS.has(v)) return [v]; // 「該当なし」選択で他を外す
+                  // 「該当なし」を選ぶと他を外す
+                  if (NONE_LABELS.has(v)) return [v];
                   const withoutNone = prev.filter((x) => !NONE_LABELS.has(x));
                   const exists = withoutNone.includes(v);
                   if (exists) return withoutNone.filter((x) => x !== v);
-                  if (withoutNone.length >= 3) return withoutNone; // 最大3つ
+                  // 最大3つまで
+                  if (withoutNone.length >= 3) return withoutNone;
                   return [...withoutNone, v];
                 });
               }
@@ -303,6 +275,7 @@ export default function Home() {
     );
   }
 
+  // フォールバック
   return (
     <div className="min-h-screen bg-white text-black flex flex-col items-center justify-center">
       <div className="text-center">
