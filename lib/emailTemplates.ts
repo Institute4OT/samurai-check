@@ -51,7 +51,6 @@ function ensureConsultLink(link?: string | null, rid?: string | null, email?: st
   let url = String(link || `${APP_BASE}/consult`);
   try {
     const u = new URL(url);
-    // rid / email / utm を足して視認性UP・計測可能に
     if (rid && !u.searchParams.get("rid")) u.searchParams.set("rid", rid);
     if (email && !u.searchParams.get("email")) u.searchParams.set("email", email);
     if (!u.searchParams.get("utm_source")) u.searchParams.set("utm_source", "email");
@@ -59,9 +58,7 @@ function ensureConsultLink(link?: string | null, rid?: string | null, email?: st
     if (!u.searchParams.get("utm_campaign")) u.searchParams.set("utm_campaign", "consult_intake");
     if (!u.searchParams.get("utm_content")) u.searchParams.set("utm_content", "cta_consult");
     url = u.toString();
-  } catch {
-    // noop
-  }
+  } catch {}
   return url;
 }
 
@@ -94,7 +91,6 @@ export function renderConsultIntakeMailToUser(args: ConsultArgs): MailRender {
 
   const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,'Apple Color Emoji','Segoe UI Emoji';line-height:1.7;color:#111">
-    <!-- preheader -->
     <div style="display:none;max-height:0;overflow:hidden;color:transparent;opacity:0;visibility:hidden">${esc(pre)}</div>
 
     <p>${esc(toName)}、このたびは<strong>無料個別相談</strong>のお申し込みありがとうございます。</p>
@@ -185,14 +181,12 @@ export function renderConsultIntakeMailToOps(args: ConsultArgs): MailRender {
 
 /* ============================================================
  * 3) ガイドメール（ユーザーへ：予約導線メイン）
- *    consult-request ルートの3通目で使用
  * ============================================================ */
 export function buildConsultEmail(args: ConsultArgs): { user: MailRender } {
   const toName = withSama(args.toName);
   const rid = args.rid || "";
   const consultUrl = ensureConsultLink(args.consultLink, args.rid || undefined, args.toEmail);
 
-  // ★ここをASCIIの変数名に修正
   const assigneeNote =
     args.assignee === "morigami"
       ? "（担当：森上）"
@@ -228,5 +222,9 @@ export function buildConsultEmail(args: ConsultArgs): { user: MailRender } {
   return { user: { subject, html, text } };
 }
 
-// --- report 系の re-export（将来の一本化に備えたブリッジ） ---
-export { buildReportEmailV2, type ReportEmailV2Input } from "./emailTemplatesV2";
+// --- report 系の re-export（★互換エイリアスつき） ---
+export {
+  buildReportEmailV2,                       // 新実装
+  buildReportEmailV2 as buildReportEmail,   // 互換用：旧名で import されてもOKにする
+  type ReportEmailV2Input,
+} from "./emailTemplatesV2";
