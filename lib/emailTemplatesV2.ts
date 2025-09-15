@@ -1,10 +1,11 @@
 // /lib/emailTemplatesV2.ts
 // ============================================================
-// 詳細レポート通知メール（V2・単独で動くフル版）
+// 詳細レポート通知メール（V2・フル版）
 // ・宛名に「様」付与
 // ・rid / email / UTM を常に付与
 // ・会社規模で導線をセグメント（<=50: シェア/LINE、>=51: 相談CTA）
 // ・プレヘッダー、HTML/テキスト両方返却
+// ・フッターに IOT 情報（社名・住所・連絡先）を明記
 // ============================================================
 
 export type MailRender = { subject: string; html: string; text: string };
@@ -14,11 +15,12 @@ export type ReportEmailV2Input = {
   typeName?: string;
   toName?: string;
   email?: string;
-  companySize?: string; // '1-10' | '11-50' | '51-100' | '101-300' | ...
+  companySize?: string; // '1～10名' | '11～50名' | '51～100名' | '1001名以上' など表記ゆれ許容
   reportLink?: string; // 既定: `${APP_BASE}/report/${rid}`
   consultLink?: string; // 既定: `${BOOKING_BASE}`
   lineOcUrl?: string; // 任意（なければ env を使用）
-  titlePrefix?: string; // 既定: 【武将タイプ診断】
+  titlePrefix?: string; // 既定: 【武将タイプ診断アプリ】
+  shareLink?: string; // 既定: `${SHARE_BASE}`
 };
 
 const APP_BASE = (
@@ -26,10 +28,21 @@ const APP_BASE = (
   process.env.NEXT_PUBLIC_BASE_URL ||
   "http://localhost:3000"
 ).replace(/\/$/, "");
+
+const SHARE_BASE = (
+  process.env.NEXT_PUBLIC_SHARE_URL || APP_BASE
+).replace(/\/$/, "");
+
 const BOOKING_BASE = (
   process.env.NEXT_PUBLIC_BOOKING_URL || `${APP_BASE}/consult`
 ).replace(/\/$/, "");
+
 const LINE_OC_URL = (process.env.NEXT_PUBLIC_LINE_OC_URL || "").trim();
+
+const IOT_MAIL = process.env.MAIL_REPLY_TO || "info@ourdx-mtg.com";
+const IOT_ADDR =
+  "〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F";
+const IOT_NAME_JA = "一般社団法人 企業の未来づくり研究所（Institute for Our Transformation）";
 
 function ensureSama(name?: string | null) {
   const n = (name ?? "").trim();
@@ -43,32 +56,58 @@ function withRidEmailUtm(
   email?: string,
   campaign?: string,
 ) {
-  const u = new URL(url);
-  if (rid && !u.searchParams.has("rid")) u.searchParams.set("rid", rid);
-  if (email && !u.searchParams.has("email")) u.searchParams.set("email", email);
-  if (campaign) {
-    if (!u.searchParams.has("utm_source"))
-      u.searchParams.set("utm_source", "email");
-    if (!u.searchParams.has("utm_medium"))
-      u.searchParams.set("utm_medium", "transactional");
-    if (!u.searchParams.has("utm_campaign"))
-      u.searchParams.set("utm_campaign", campaign);
+  try {
+    const u = new URL(url);
+    if (rid && !u.searchParams.has("rid")) u.searchParams.set("rid", rid);
+    if (email && !u.searchParams.has("email")) u.searchParams.set("email", email);
+    if (campaign) {
+      if (!u.searchParams.has("utm_source")) u.searchParams.set("utm_source", "email");
+      if (!u.searchParams.has("utm_medium")) u.searchParams.set("utm_medium", "transactional");
+      if (!u.searchParams.has("utm_campaign")) u.searchParams.set("utm_campaign", campaign);
+    }
+    return u.toString();
+  } catch {
+    return url;
   }
-  return u.toString();
 }
 
-function sizeBucket(size?: string) {
-  if (!size) return "small";
-  const s = String(size).toLowerCase();
-  // “1–10” の長いダッシュ表記なども拾う
-  if (
-    s.includes("1-10") ||
-    s.includes("11-50") ||
-    s.includes("1–10") ||
-    s.includes("11–50")
-  )
-    return "small";
-  return "large";
+/** 会社規模：'small' (<=50) / 'large' (>=51) */
+function sizeBucket(v?: string) {
+  if (!v) return "small";
+  const s = String(v).trim();
+  // 記号の正規化（全角/半角の波線・ダッシュをハイフンへ、末尾の「名」除去）
+  const t = s
+    .replace(/[〜～~–—－]/g, "-")
+    .replace(/名/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+
+  // 例: "1001以上" / "1001+" / "51以上"
+  const mPlus = t.match(/(\d+)\s*(\+|以上)$/);
+  if (mPlus) {
+    const n = Number(mPlus[1]);
+    return n >= 51 ? "large" : "small";
+  }
+
+  // 例: "50以下"
+  if (/(\d+)\s*以下$/.test(t)) {
+    const n = Number(RegExp.$1);
+    return n <= 50 ? "small" : "large";
+  }
+
+  // 例: "11-50", "51-100"
+  const mRange = t.match(/(\d+)\s*-\s*(\d+)/);
+  if (mRange) {
+    const max = Number(mRange[2]);
+    return max <= 50 ? "small" : "large";
+  }
+
+  // 明示パターン
+  if (/^(1-10|11-50)$/.test(t)) return "small";
+  if (/^(51-100|101-300|301-1000|1001-.*|1001\+|1001以上)$/.test(t)) return "large";
+
+  // 不明なら small（安全側）
+  return "small";
 }
 
 function esc(s: string) {
@@ -87,12 +126,21 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
     input.email,
     "report_ready",
   );
+
   const consultUrl = withRidEmailUtm(
     input.consultLink || BOOKING_BASE,
     rid,
     input.email,
     "consult_cta",
   );
+
+  const shareUrl = withRidEmailUtm(
+    input.shareLink || SHARE_BASE,
+    rid,
+    input.email,
+    "share_cta",
+  );
+
   const lineUrl =
     input.lineOcUrl || LINE_OC_URL
       ? withRidEmailUtm(
@@ -103,8 +151,12 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
         )
       : "";
 
-  const prefix = input.titlePrefix || "【武将タイプ診断】";
-  const subject = `${prefix} ▶ ${typeName} ｜ ■詳細レポートのご案内（シェア歓迎） （ID: ${rid}）`;
+  const prefix = input.titlePrefix || "【武将タイプ診断アプリ】";
+  const subject =
+    `${prefix} ▶ ${typeName}｜` +
+    `■詳細レポートのご案内` +
+    `${bucket === "small" ? "（シェア歓迎）" : "（特典：無料個別相談）」"} ` +
+    `（ID: ${rid}）`;
 
   const preheader =
     "診断の詳細レポートをご確認ください。会社規模に応じた次のアクションもご案内します。";
@@ -112,32 +164,42 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
   const segSmallHtml = `
     <p><strong>🌟 50名以下の組織の皆さまへ</strong><br/>
       診断アプリのご紹介・シェアにご協力ください（経営者仲間やSNSでの拡散をお願いします）。</p>
+    <p style="margin:14px 0 0">
+      <a href="${shareUrl}" style="display:inline-block;padding:10px 16px;border:1px solid #111;border-radius:8px;text-decoration:none">
+        ▶ 診断アプリを紹介・シェアする
+      </a>
+    </p>
     ${
       lineUrl
-        ? `
-      <p style="margin:14px 0 0">
-        <a href="${lineUrl}" style="display:inline-block;padding:10px 16px;border:1px solid #0b8f4d;border-radius:8px;text-decoration:none">
-          LINEオープンチャットに参加する
-        </a>
-      </p>`
+        ? `<p style="font-size:12px;color:#555;margin-top:10px">情報交換用の LINE オープンチャットも開設しています：<a href="${lineUrl}">参加リンク</a></p>`
         : ""
     }
   `;
 
   const segLargeHtml = `
     <p><strong>🌟 51名以上の組織の皆さまへ</strong><br/>
-      詳細レポート特典として、<u>無料個別相談</u>をご案内しています。</p>
+      診断レポート特典として、<u>無料個別相談</u>をご案内しています。</p>
     <p style="margin:14px 0 0">
       <a href="${consultUrl}" style="display:inline-block;padding:10px 16px;border:1px solid #111;border-radius:8px;text-decoration:none">
-        無料個別相談を申し込む
+        ▶ 無料個別相談を申し込む
       </a>
     </p>
-    ${lineUrl ? `<p style="font-size:12px;color:#555;margin-top:10px">※ 情報交換用の LINE オープンチャットも開設しています：<a href="${lineUrl}">参加リンク</a></p>` : ""}
+    ${lineUrl ? `<p style="font-size:12px;color:#555;margin-top:10px">情報交換用の LINE オープンチャットも開設しています：<a href="${lineUrl}">参加リンク</a></p>` : ""}
+  `;
+
+  const footerHtml = `
+    <hr style="border:none;border-top:1px solid #eee;margin:24px 0;" />
+    <div style="font-size:12px;color:#555;line-height:1.6">
+      <div>${IOT_NAME_JA}</div>
+      <div>📧 <a href="mailto:${IOT_MAIL}">${IOT_MAIL}</a></div>
+      <div>${IOT_ADDR}</div>
+      <div style="margin-top:6px;">このメールにそのまま返信していただいてもOKです。</div>
+    </div>
   `;
 
   const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,'Apple Color Emoji','Segoe UI Emoji';line-height:1.7;color:#111">
-      <!-- プレヘッダー（多くのメーラーで冒頭に表示） -->
+      <!-- プレヘッダー -->
       <div style="display:none;max-height:0;overflow:hidden;color:transparent;opacity:0;visibility:hidden">${esc(preheader)}</div>
 
       <p>${esc(toName)}、こんにちは。IOT（企業の未来づくり研究所）です。</p>
@@ -151,9 +213,7 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
 
       ${bucket === "small" ? segSmallHtml : segLargeHtml}
 
-      <hr style="border:none;border-top:1px solid #eee;margin:24px 0;" />
-      <p>ご不明点があれば、このメールに<strong>そのまま返信</strong>してください。</p>
-      <p style="font-size:12px;color:#555">本メールは IOT の診断サービスより自動送信されています。</p>
+      ${footerHtml}
     </div>
   `.trim();
 
@@ -161,11 +221,12 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
     `${subject}\n\n` +
     `▼レポート: ${reportUrl}\n` +
     (bucket === "small"
-      ? (lineUrl ? `▼LINE OC: ${lineUrl}\n` : "") +
-        `シェアのご協力をお願いします。`
-      : `▼無料個別相談: ${consultUrl}\n` +
-        (lineUrl ? `LINE OC: ${lineUrl}\n` : "")) +
-    `\n\nご不明点はこのメールにそのまま返信してください。`;
+      ? `▼シェアURL: ${shareUrl}\n` + (lineUrl ? `▼LINE OC: ${lineUrl}\n` : "")
+      : `▼無料個別相談: ${consultUrl}\n` + (lineUrl ? `▼LINE OC: ${lineUrl}\n` : "")) +
+    `\n${IOT_NAME_JA}\n` +
+    `📧 ${IOT_MAIL}\n` +
+    `${IOT_ADDR}\n` +
+    `\nご不明点はこのメールにそのまま返信してください。`;
 
   return { subject, html, text };
 }
