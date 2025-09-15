@@ -1,18 +1,24 @@
 // /lib/result/normalize.ts
 // ------------------------------------------------------------
-// 結果表示・集計ユーティリティ（フル機能 + 表記ゆれ吸収）
+// 結果表示・集計ユーティリティ（フル機能 + 表記ゆれ吸収 + 互換API）
 //  - 表示順/ラベルは report/categoryNormalize に統一
 //  - harassmentAwareness / harassmentRisk は常に両方そろえる
-//  - ALIASES で英名/和名/略称/スネーク等の表記ゆれを正式キーへ寄せる
-//  - グラフ用配列化、レコード化、上位/下位抽出、Zodスキーマ、ゆるい入力の吸収ヘルパ
+//  - ALIASES で英名/和名/略称/スネーク等を正式キーへ寄せる
+//  - グラフ用配列化、レコード化、上位/下位抽出、Zodスキーマ、ゆるい入力の吸収
+//  - 互換API: normalizeToCatArray / resolveSamuraiType / getEmojiLabel を提供
 // ------------------------------------------------------------
 
-import type { CategoryKey, NormalizedCategoryScores } from '@/types/diagnosis';
+import type {
+  CategoryKey,
+  NormalizedCategoryScores,
+  SamuraiType,
+} from '@/types/diagnosis';
 import { ensureHarassmentAliases } from '@/lib/harassmentKey';
 import {
   CATEGORY_ORDER as CATEGORY_KEYS,          // 正式6カテゴリの順序配列
   DEFAULT_LABELS as LABELS_BY_CATEGORY,     // ラベル表（awareness/risk 両方あり）
 } from '@/lib/report/categoryNormalize';
+import { judgeSamurai } from '@/lib/samuraiJudge';
 import { z } from 'zod';
 
 /* ========== 基本ユーティリティ ========== */
@@ -151,7 +157,6 @@ export const NormalizedScoresSchema = z.object({
 export function coerceNormalized(input: unknown): NormalizedCategoryScores | undefined {
   const p = NormalizedScoresSchema.safeParse(input);
   if (p.success) return ensureHarassmentAliases(p.data);
-  // 例えば { '無自覚ハラスメント傾向': 2.1, 'comm_gap': 1.5, ... } のような“ゆるい”形も吸収
   if (input && typeof input === 'object') {
     return coerceFromLooseObject(input as Record<string, any>);
   }
@@ -173,11 +178,47 @@ export function coerceFromLooseObject(obj: Record<string, any>): NormalizedCateg
     const key = normalizeCategoryKey(k);
     if (!key) continue;
     const num = clamp03(Number(v));
-    // 同じカテゴリに複数表記が来たら最大値を採用（安全側）
     base[key] = Math.max(base[key], num);
   }
 
   return ensureHarassmentAliases(base as unknown as NormalizedCategoryScores);
+}
+
+/* ========== 互換API（既存の import を壊さないための追加） ========== */
+
+/** 旧名との互換：normalizeToCatArray → toRows と同義 */
+export const normalizeToCatArray = toRows;
+
+/** 旧UIが期待する“絵文字＋ラベル”表示用 */
+export function getEmojiLabel(k: CategoryKey): string {
+  const emoji: Record<CategoryKey, string> = {
+    delegation: '🤝',
+    orgDrag: '🧱',
+    commGap: '🗣️',
+    updatePower: '⚡',
+    genGap: '👥',
+    harassmentAwareness: '⚠️',
+  };
+  return `${emoji[k]} ${LABELS_BY_CATEGORY[k]}`;
+}
+
+/** SamuraiType を安全に解決（引数が無ければスコアから判定） */
+const SAMURAI_TYPES: SamuraiType[] = [
+  '真田幸村型','織田信長型','豊臣秀吉型','徳川家康型','上杉謙信型','斎藤道三型','今川義元型',
+];
+function isSamuraiType(v: any): v is SamuraiType {
+  return typeof v === 'string' && (SAMURAI_TYPES as string[]).includes(v);
+}
+
+export function resolveSamuraiType(
+  input?: unknown,
+  scores?: NormalizedCategoryScores,
+): SamuraiType | undefined {
+  if (isSamuraiType(input)) return input;
+  if (scores) {
+    try { return judgeSamurai(scores); } catch { /* noop */ }
+  }
+  return undefined;
 }
 
 /* ========== 互換エクスポート（既存呼び出し温存） ========== */
