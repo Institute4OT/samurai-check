@@ -1,103 +1,82 @@
 // lib/report/categoryNormalize.ts
-export type CategoryKey =
-  | 'delegation'
-  | 'orgDrag'
-  | 'commGap'
-  | 'updatePower'
-  | 'genGap'
-  | 'harassmentRisk';
+// ------------------------------------------------------------
+// レポート表示用：カテゴリ名ラベルと配列化ユーティリティ
+// - NormalizedCategoryScores の keyof を使うマップは
+//   harassmentAwareness / harassmentRisk の“両方”を持たせて型を満たす
+// - 既存コードとの互換用に、よく使われるエイリアス名も export しておく
+// ------------------------------------------------------------
 
-export type CategoryScore = {
-  key: CategoryKey;
-  label: string;
-  score: number; // 0–3
-};
+import type {
+  CategoryKey,
+  NormalizedCategoryScores,
+} from '@/types/diagnosis';
 
-// UI表示名（和名）
-export const JP_LABEL_BY_KEY: Record<CategoryKey, string> = {
-  delegation: '権限委譲・構造整合性',
-  orgDrag: '組織進化阻害',
-  commGap: 'コミュ力',
-  updatePower: 'アップデート力',
-  genGap: 'ジェネギャップ感覚',
-  harassmentRisk: '無自覚ハラスメント傾向',
-};
-
-// 表示順（固定）
-export const ORDER: CategoryKey[] = [
+/** 表示順（レポート用に固定） */
+export const CATEGORY_ORDER: CategoryKey[] = [
   'delegation',
   'orgDrag',
   'commGap',
   'updatePower',
   'genGap',
-  'harassmentRisk',
+  'harassmentAwareness',
 ];
 
-// 異表記 → 社内標準キー
-const KEY_ALIASES: Record<string, CategoryKey> = {
-  delegation: 'delegation',
-
-  orgdrag: 'orgDrag',
-  org_inhibition: 'orgDrag',
-
-  commgap: 'commGap',
-  comm_gap: 'commGap',
-
-  updatepower: 'updatePower',
-  update_ability: 'updatePower',
-
-  gengap: 'genGap',
-  gen_gap: 'genGap',
-
-  harassmentrisk: 'harassmentRisk',
-  harassment_risk: 'harassmentRisk',
-};
-
-export const clamp03 = (n: unknown) => {
-  const v = Number(n);
-  if (!isFinite(v)) return 0;
-  return Math.max(0, Math.min(3, v));
-};
-
-function asKey(raw: unknown): CategoryKey | null {
-  if (!raw) return null;
-  const k = String(raw).trim();
-  const norm = k.replace(/[\s_-]/g, '').toLowerCase();
-  return KEY_ALIASES[norm] ?? null;
+/** 0〜3にクランプ＋丸め（小数1桁） */
+function clamp03(v: number, digits = 1) {
+  const x = Math.max(0, Math.min(3, Number(v ?? 0)));
+  const p = Math.pow(10, digits);
+  return Math.round(x * p) / p;
 }
 
-/** どんな形で来ても { key, label, score }[] に統一する */
-export function normalizeCategories(input: unknown): CategoryScore[] {
-  const bucket = new Map<CategoryKey, number>();
+/** awareness / risk を常に両方そろえる（ランタイム安全化） */
+export function ensureHarassmentAliases<T extends Record<string, any>>(scores: T) {
+  const v = Number(scores.harassmentAwareness ?? scores.harassmentRisk ?? 0);
+  return { ...scores, harassmentAwareness: v, harassmentRisk: v } as T & {
+    harassmentAwareness: number;
+    harassmentRisk: number;
+  };
+}
 
-  // 1) 配列 [{key?, label?, score?}]
-  if (Array.isArray(input)) {
-    for (const it of input as any[]) {
-      const k =
-        asKey(it?.key) ??
-        asKey(it?.category) ??
-        // label が和名なら逆引き（完全一致）
-        (Object.entries(JP_LABEL_BY_KEY).find(
-          ([, jp]) => String(it?.label ?? '').trim() === jp
-        )?.[0] as CategoryKey | undefined) ??
-        null;
-      if (!k) continue;
-      bucket.set(k, clamp03(it?.score));
-    }
-  }
-  // 2) オブジェクト { key: score }
-  else if (input && typeof input === 'object') {
-    for (const [rawKey, val] of Object.entries(input as Record<string, unknown>)) {
-      const k = asKey(rawKey);
-      if (!k) continue;
-      bucket.set(k, clamp03(val));
-    }
-  }
+/** ラベル表（NormalizedCategoryScores の keyof を満たす） */
+export const DEFAULT_LABELS: Record<keyof NormalizedCategoryScores, string> = {
+  delegation: '権限委譲・構造健全度',
+  orgDrag: '組織進化阻害',
+  commGap: 'コミュ力誤差',
+  updatePower: 'アップデート力',
+  genGap: 'ジェネギャップ感覚',
+  // ★両方を“必ず”定義する（型満たし＋互換）
+  harassmentAwareness: '無自覚ハラ傾向',
+  harassmentRisk: '無自覚ハラ傾向',
+};
 
-  // 3) 足りないキーは 0 で補完。順番は固定
-  return ORDER.map((k) => ({
+/** 行データ型（表やグラフに流しやすい形） */
+export type CategoryRow = {
+  key: CategoryKey;
+  label: string;
+  value: number;   // 0〜3
+};
+
+/** スコアを配列（表示順）に整形 */
+export function toCategoryRows(
+  scores: NormalizedCategoryScores,
+  labels: Record<keyof NormalizedCategoryScores, string> = DEFAULT_LABELS,
+): CategoryRow[] {
+  const s = ensureHarassmentAliases(scores);
+  return CATEGORY_ORDER.map((k) => ({
     key: k,
-    label: JP_LABEL_BY_KEY[k],
-    score: bucket.get(k) ?? 0,
+    label: labels[k],
+    value: clamp03((s as any)[k]),
   }));
+}
+
+/** ラベルだけ必要な箇所向けの別名（互換） */
+export const LABELS = DEFAULT_LABELS;
+export const categoryLabels = DEFAULT_LABELS;
+
+/** 互換：以前この名前で呼んでいたコードがある場合の橋渡し */
+export function normalizeCategories(
+  scores: NormalizedCategoryScores,
+  labels: Record<keyof NormalizedCategoryScores, string> = DEFAULT_LABELS,
+) {
+  return toCategoryRows(scores, labels);
 }
