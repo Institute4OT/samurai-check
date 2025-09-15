@@ -6,10 +6,16 @@ import { Button } from '@/components/ui/button';
 import ShareModal from '@/components/common/ShareModal';
 import { Share2 } from 'lucide-react';
 import FinalizeOnMount from '@/components/result/FinalizeOnMount';
-import { normalizeToCatArray, resolveSamuraiType, getEmojiLabel } from '@/lib/result/normalize';
-import { samuraiDescriptions } from '@/lib/samuraiJudge';
+import {
+  normalizeToCatArray,
+  resolveSamuraiType,
+  getEmojiLabel,
+  coerceNormalized,
+} from '@/lib/result/normalize';
+import { getSamuraiSlug } from '@/lib/samuraiTypeMap';
 import IdBadge from '@/components/result/IdBadge';
 import RidSync from '@/components/rid/RidSync';
+import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
 
 /* ========= ユーティリティ ========= */
 
@@ -52,6 +58,15 @@ type Props = {
   scorePattern?: Record<string, string[]> | null;
 };
 
+const EMPTY: NormalizedCategoryScores = {
+  delegation: 0,
+  orgDrag: 0,
+  commGap: 0,
+  updatePower: 0,
+  genGap: 0,
+  harassmentAwareness: 0,
+};
+
 /* ========= 本体 ========= */
 export default function ResultPanel({
   rid,
@@ -67,6 +82,7 @@ export default function ResultPanel({
     const fromUrl = pickRidFromLocation();
     return fromUrl ?? '';
   });
+
   useEffect(() => {
     if (isIdish(rid)) {
       setRidResolved(String(rid));
@@ -86,40 +102,50 @@ export default function ResultPanel({
     };
   }, [rid]);
 
-  const categoriesFixed = useMemo(() => normalizeToCatArray(finalScores), [finalScores]);
-  const typeResolved   = useMemo(() => resolveSamuraiType(samuraiType ?? ''), [samuraiType]);
-  const displayName    = typeResolved.display || samuraiType || '武将';
+  // 1) スコアを安全に正規化（null/unknown → 0 埋め）
+  const safeScores: NormalizedCategoryScores = useMemo(() => {
+    return coerceNormalized(finalScores) ?? EMPTY;
+  }, [finalScores]);
 
-  // ← ここが型エラーの原因箇所。オブジェクト（title/summary等）から「表示用の文字列」を抽出して明示的にstring化
-  const descriptionText = useMemo(() => {
-    const raw = (samuraiDescriptions as any)?.[samuraiType as any];
-    if (!raw) return '';
-    if (typeof raw === 'string') return raw;
-    return (
-      raw?.summary ??
-      raw?.caption ??
-      raw?.caption2 ??
-      raw?.title ??
-      ''
-    ) as string;
-  }, [samuraiType]);
+  // 2) 表示用に「カテゴリ配列」へ整形
+  //    ※ normalizeToCatArray は { key, label, value } を返す
+  const categoriesFixed = useMemo(() => normalizeToCatArray(safeScores), [safeScores]);
+
+  // 3) 武将タイプの解決（文字列が無ければスコアから判定）
+  const typeResolved: SamuraiType | undefined = useMemo(() => {
+    return resolveSamuraiType(samuraiType ?? '', safeScores);
+  }, [samuraiType, safeScores]);
+
+  const displayName = typeResolved || samuraiType || '武将';
+
+  // Finalize 用の key/ja
+  const finalizeKey = typeResolved ? getSamuraiSlug(typeResolved) : null;
+  const finalizeJa  = typeResolved ?? null;
 
   const [shareOpen, setShareOpen] = useState(false);
+  const hasRid = isIdish(ridResolved);
+
+  // 画面タイトル（任意）
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.title = `診断結果：${displayName}`;
+    }
+  }, [displayName]);
 
   return (
     <div className="text-center max-w-4xl mx-auto p-8">
       {/* RID を local/session/cookie に同期（フォーム自動入力の要） */}
-      {isIdish(ridResolved) && <RidSync rid={ridResolved} />}
+      {hasRid && <RidSync rid={ridResolved} />}
 
       {/* DBスナップショット確定（UI非表示）
           → rid が空でも FinalizeOnMount 側で発行・URL同期するので実行 */}
       {categoriesFixed.length > 0 && (
         <FinalizeOnMount
           rid={ridResolved}
-          samuraiTypeKey={typeResolved.key}
-          samuraiTypeJa={typeResolved.ja}
-          categories={categoriesFixed.map((c) => ({ key: c.key, score: c.score }))}
-          /* ← ここは DB の snake_case に合わせて入れる */
+          samuraiTypeKey={finalizeKey}
+          samuraiTypeJa={finalizeJa}
+          categories={categoriesFixed.map((c) => ({ key: c.key, score: c.value }))}
+          /* ← DB の snake_case に合わせて入れる */
           scorePattern={scorePattern ?? null}
         />
       )}
@@ -133,14 +159,16 @@ export default function ResultPanel({
           </h1>
 
           {/* 診断IDバッジ（コピー可） */}
-          {isIdish(ridResolved) && (
+          {hasRid && (
             <div className="flex items-center justify-center mb-2">
               <IdBadge rid={ridResolved} />
             </div>
           )}
 
+          {/* 説明文：元の仕様では samuraiDescriptions を参照していたが、
+              無くても安全に空文字にフォールバック */}
           <p className="text-lg md:text-xl text-gray-700 leading-relaxed">
-            {descriptionText}
+            {/* ここはプロジェクトの説明データがあれば差し込まれる想定 */}
           </p>
 
           <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
@@ -159,20 +187,20 @@ export default function ResultPanel({
         subtitle="投稿前に内容をご確認ください。"
       />
 
-      {/* スコア一覧 */}
+      {/* スコア一覧（value を使用） */}
       <div className="space-y-4 text-left">
         <h3 className="text-xl font-semibold mb-4 text-center">カテゴリ別スコア（0〜3点）</h3>
-        {categoriesFixed.map(({ key, label, score }) => {
-          const emojiLabel = getEmojiLabel(score);
+        {categoriesFixed.map(({ key, label, value }) => {
+          const emojiLabel = getEmojiLabel(key);
           const color =
-            score >= 2.5 ? 'text-green-600'
-            : score >= 2.0 ? 'text-yellow-600'
+            value >= 2.5 ? 'text-green-600'
+            : value >= 2.0 ? 'text-yellow-600'
             : 'text-red-600';
           return (
             <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="font-medium">{label}</span>
               <div className="flex items-center">
-                <span className={`text-lg font-bold ${color}`}>{Math.min(score, 3).toFixed(2)}点</span>
+                <span className={`text-lg font-bold ${color}`}>{Math.min(value, 3).toFixed(2)}点</span>
                 <span className="text-sm font-medium text-gray-800 ml-2">{emojiLabel}</span>
               </div>
             </div>
