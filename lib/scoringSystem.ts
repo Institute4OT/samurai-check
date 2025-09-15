@@ -16,20 +16,25 @@ import type {
 
 /* ===================== 設問→カテゴリの紐づけ ===================== */
 // 仕様メモ（2025-07-22）
-// Q1＝権限委譲・構造健全度
-// Q2＝組織進化阻害、無自覚ハラスメント傾向
-// Q3＝組織進化阻害
-// Q4＝コミュ力誤差
-// Q5＝アップデート力、ジェネギャップ感覚
-// Q6＝アップデート力、ジェネギャップ感覚
-// Q7＝アップデート力
-// Q8＝組織進化阻害、コミュ力誤差
-// Q9＝ジェネギャップ感覚、コミュ力誤差
-// Q10＝アップデート力
-// Q11＝組織進化阻害、無自覚ハラスメント傾向、権限委譲・構造健全度
-// Q12＝ジェネギャップ感覚、コミュ力誤差
-// Q13＝無自覚ハラスメント傾向、権限委譲・構造健全度
-// Q14＝権限委譲・構造健全度
+/*
+Q1 ＝ 権限委譲・構造健全度
+Q2 ＝ 組織進化阻害, 無自覚ハラスメント傾向
+Q3 ＝ 組織進化阻害
+Q4 ＝ コミュ力誤差
+Q5 ＝ アップデート力, ジェネギャップ感覚
+Q6 ＝ アップデート力, ジェネギャップ感覚
+Q7 ＝ アップデート力
+Q8 ＝ 組織進化阻害, コミュ力誤差
+Q9 ＝ ジェネギャップ感覚, コミュ力誤差
+Q10＝ アップデート力
+Q11＝ 組織進化阻害, 無自覚ハラスメント傾向, 権限委譲・構造健全度
+Q12＝ ジェネギャップ感覚, コミュ力誤差
+Q13＝ 無自覚ハラスメント傾向, 権限委譲・構造健全度
+Q14＝ 権限委譲・構造健全度
+Q15＝ 無自覚ハラスメント傾向, コミュ力誤差   ← ★追加
+Q16＝ 無自覚ハラスメント傾向, 権限委譲・構造健全度 ← ★追加
+*/
+
 const MAPPING: Record<QuestionId, CategoryKey[]> = {
   Q1:  ['delegation'],
   Q2:  ['orgDrag', 'harassmentAwareness'],
@@ -45,6 +50,9 @@ const MAPPING: Record<QuestionId, CategoryKey[]> = {
   Q12: ['genGap', 'commGap'],
   Q13: ['harassmentAwareness', 'delegation'],
   Q14: ['delegation'],
+  // ★ ここから追記（今回のクラッシュ原因）
+  Q15: ['harassmentAwareness', 'commGap'],
+  Q16: ['harassmentAwareness', 'delegation'],
 };
 
 /* ========================= 型と定数 ========================= */
@@ -56,15 +64,10 @@ export type NormalizeMode =
   | 'fixedMax'; // カテゴリごとに固定上限を明示（上級者向け）
 
 export type ScoringOptions = {
-  // 正規化の方式
   normalizeMode?: NormalizeMode;
-  // 設問1つあたりの理論上限点（通常3）
   maxPerQuestion?: number;
-  // fixedMax時のカテゴリ別上限（未指定カテゴリはauto算出にフォールバック）
   fixedMaxByCategory?: Partial<Record<CategoryKey, number>>;
-  // カテゴリ重み（1.0がデフォルト）※重みを掛けた後で0〜3に丸めます
   weights?: Partial<Record<CategoryKey, number>>;
-  // 小数丸めの桁（デフォルト＝小数1桁）
   roundDigits?: number;
 };
 
@@ -110,7 +113,7 @@ export function getMapping(): Readonly<Record<QuestionId, CategoryKey[]>> {
 export function countQuestionsByCategory(cat: CategoryKey): number {
   let n = 0;
   (Object.keys(MAPPING) as QuestionId[]).forEach((qid) => {
-    if (MAPPING[qid].includes(cat)) n += 1;
+    if (MAPPING[qid]?.includes(cat)) n += 1;
   });
   return n;
 }
@@ -123,9 +126,7 @@ function roundTo(value: number, digits: number): number {
 
 /* ========================= バリデーション ========================= */
 
-/**
- * パターン上の未知QIDや空文字回答を検出（致命傷ではないが警告用）
- */
+/** パターン上の未知QIDや空文字回答を検出（致命傷ではないが警告用） */
 export function validatePattern(pattern: ScorePattern): {
   unknownQids: string[];
   emptyAnswers: QuestionId[];
@@ -133,9 +134,9 @@ export function validatePattern(pattern: ScorePattern): {
   const unknownQids: string[] = [];
   const emptyAnswers: QuestionId[] = [];
 
-  Object.entries(pattern).forEach(([qid, answer]) => {
-    if (!(qid as QuestionId in MAPPING)) unknownQids.push(qid);
-    if (!String(answer ?? '').trim()) emptyAnswers.push(qid as QuestionId);
+  (Object.keys(pattern) as QuestionId[]).forEach((qid) => {
+    if (!(qid in MAPPING)) unknownQids.push(qid);
+    if (!String((pattern as any)[qid] ?? '').trim()) emptyAnswers.push(qid);
   });
 
   return { unknownQids, emptyAnswers };
@@ -165,14 +166,19 @@ export function calculateCategoryScores(
   const raw = makeEmptyRaw();
   const details: ScoreDetailRow[] = [];
 
-  // 1) 生スコア集計
+  // 1) 生スコア集計（未知QIDでも落ちないよう防御）
   (Object.keys(pattern) as QuestionId[]).forEach((qid) => {
-    const answerText = pattern[qid];
+    const answerText = (pattern as any)[qid];
     const map = scoreMap[qid] || {};
     const score = map[answerText] ?? 0;
 
-    // 設問→カテゴリへ加算
-    const cats = MAPPING[qid];
+    const cats = MAPPING[qid] ?? []; // ← ★undefined防止
+    if (cats.length === 0) {
+      // ここは仕様外のQID。集計せず details にヒントだけ残す
+      details.push({ qid, answerText, score: 0, contributes: [] });
+      return;
+    }
+
     cats.forEach((cat) => {
       raw[cat] += score;
     });
@@ -207,7 +213,6 @@ export function calculateCategoryScores(
   ALL_CATEGORIES.forEach((cat) => {
     const w = weights[cat] ?? 1.0;
     const weighted = raw[cat] * w;
-    // 0..3へスケール
     const v = Math.max(0, Math.min(3, (weighted / upperFinal[cat]) * 3));
     normalized[cat] = roundTo(v, roundDigits);
   });
@@ -221,10 +226,6 @@ export function calculateCategoryScores(
 
 /* ========================= おまけ（可視化支援） ========================= */
 
-/**
- * レーダーチャート用データ（ラベル付き）を生成
- * - labelMap: 表示名（未指定時はカテゴリキーをそのまま）
- */
 export function toRadarData(
   normalized: NormalizedCategoryScores,
   labelMap?: Partial<Record<CategoryKey, string>>,
@@ -236,9 +237,6 @@ export function toRadarData(
   }));
 }
 
-/**
- * デバッグ用：各カテゴリの理論上限テーブルを返す
- */
 export function getCategoryCeilTable(
   mode: NormalizeMode = 'auto',
   maxPerQuestion = 3,
@@ -257,41 +255,29 @@ export function getCategoryCeilTable(
   return upper;
 }
 
-// === Compatibility shims (既存ロジックはそのまま) =====================
+// === Compatibility shims（既存ロジックはそのまま） =====================
 
-// 呼び出し側が参照している汎用スコア型（型エラー回避用）
 export type CategoryScores = Record<string, number>;
 
-/**
- * デバッグ計算の互換API:
- * - 既存 core（evaluateNormalizedCategoryScores）があればそのまま使う
- * - 無ければ、既存 calculateCategoryScores の結果をそれっぽく整形して返す
- * - どちらも無ければ完全フォールバック（空）
- */
 export function debugScoreCalculation(pattern: any, answers: any, options: any = {}) {
   try {
-    // @ts-ignore 既存 core があれば優先
+    // @ts-ignore
     if (typeof evaluateNormalizedCategoryScores === 'function') {
       // @ts-ignore
       return evaluateNormalizedCategoryScores(pattern, answers, options);
     }
-  } catch {
-    // noop
-  }
+  } catch {}
 
   try {
-    // @ts-ignore 既存の厳密版がある場合はそれを利用
+    // @ts-ignore
     if (typeof calculateCategoryScores === 'function') {
       // @ts-ignore
       const cs = calculateCategoryScores(pattern, /* scoreMap */ undefined, options) as any;
       const total = Object.values(cs || {}).reduce((a: number, b: any) => a + (Number(b) || 0), 0);
       return { categoryScores: cs || {}, total, _fallback: true as const };
     }
-  } catch {
-    // noop
-  }
+  } catch {}
 
-  // 最終フォールバック
   return { categoryScores: {} as CategoryScores, total: 0, _fallback: true as const };
 }
 // ======================================================================
