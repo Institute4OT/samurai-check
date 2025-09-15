@@ -12,6 +12,7 @@ import {
 import { judgeSamurai } from "@/lib/samuraiJudge";
 import { TYPE_CONTENTS } from "@/lib/report/typeContents";
 import { getPersonalizedComments } from "@/lib/report/personalization";
+import { ensureHarassmentAliases } from "@/lib/harassmentKey";
 
 export const revalidate = 0;
 
@@ -25,22 +26,8 @@ function coerceScorePattern(v: unknown): ScorePattern {
   ) as Record<string, unknown>;
 
   const qs: QuestionId[] = [
-    "Q1",
-    "Q2",
-    "Q3",
-    "Q4",
-    "Q5",
-    "Q6",
-    "Q7",
-    "Q8",
-    "Q9",
-    "Q10",
-    "Q11",
-    "Q12",
-    "Q13",
-    "Q14",
-    "Q15",
-    "Q16",
+    "Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8",
+    "Q9","Q10","Q11","Q12","Q13","Q14","Q15","Q16",
   ];
 
   const out: Record<QuestionId, string> = {} as any;
@@ -49,7 +36,6 @@ function coerceScorePattern(v: unknown): ScorePattern {
     const raw = src[q];
     let text = "";
     if (Array.isArray(raw)) {
-      // 複数が来ても先頭を採用（仕様：ScorePattern は string）
       const first = (raw as unknown[])[0];
       text = typeof first === "string" ? first : String(first ?? "");
     } else if (typeof raw === "string") {
@@ -89,6 +75,7 @@ export default async function ReportPage({ params }: PageProps) {
   }
 
   // scores が不正/NULL → 結果画面へ退避（Finalize 未完の保険）
+  // ① 旧キー/日本語キーを補正し、② 文字列数値も coerce で許容して検証
   const ScoresSchema = z.object({
     delegation: z.coerce.number(),
     orgDrag: z.coerce.number(),
@@ -97,12 +84,15 @@ export default async function ReportPage({ params }: PageProps) {
     genGap: z.coerce.number(),
     harassmentAwareness: z.coerce.number(),
   });
-  const ok = ScoresSchema.safeParse(data.normalized_scores).success;
+
+  const rawScores = (data.normalized_scores ?? {}) as Record<string, unknown>;
+  const normalizedScoresObj = ensureHarassmentAliases(rawScores);
+  const ok = ScoresSchema.safeParse(normalizedScoresObj).success;
   if (!ok) {
     redirect(`/result?rid=${encodeURIComponent(rid.data)}`);
   }
 
-  const scores = data.normalized_scores as NormalizedCategoryScores;
+  const scores = normalizedScoresObj as NormalizedCategoryScores;
 
   // samurai_type 無しならスコアから判定
   let samuraiType: SamuraiType | undefined =
