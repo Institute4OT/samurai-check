@@ -3,6 +3,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { ensureHarassmentAliases } from '@/lib/harassmentKey';　//　←　一行追加
+
 import StartScreen from '@/components/StartScreen';
 import QuizQuestion from '@/components/QuizQuestion';
 import ResultPanel from '@/components/result/ResultPanel';
@@ -182,21 +184,28 @@ export default function Home() {
 
     // 4) 正規化 0〜3 & タイプ判定
     const normalized = result.normalized as NormalizedCategoryScores;
-    const typeDisplay = String(judgeSamuraiType(normalized) ?? '');
+    const normalizedFixed = ensureHarassmentAliases(normalized); // ★両キーを揃える
+    const typeDisplay = String(judgeSamuraiType(normalizedFixed) ?? '');
 
     // 5) コメント生成（日本語ラベルで渡す）
     const commentSource: Record<string, number> = {
-      '権限委譲・構造健全度': clamp03(normalized.delegation),
-      '組織進化阻害': clamp03(normalized.orgDrag),
-      'コミュ力誤差': clamp03(normalized.commGap),
-      'アップデート力': clamp03(normalized.updatePower),
-      'ジェネギャップ感覚': clamp03(normalized.genGap),
-      '無自覚ハラスメント傾向': clamp03(
-        (normalized as any).harassmentAwareness ?? (normalized as any).harassmentRisk ?? 0
-      ),
+      '権限委譲・構造健全度': clamp03(normalizedFixed.delegation),
+      '組織進化阻害': clamp03(normalizedFixed.orgDrag),
+      'コミュ力誤差': clamp03(normalizedFixed.commGap),
+      'アップデート力': clamp03(normalizedFixed.updatePower),
+      'ジェネギャップ感覚': clamp03(normalizedFixed.genGap),
+      '無自覚ハラスメント傾向': clamp03(normalizedFixed.harassmentAwareness),
     };
     const cmts = generateScoreComments(commentSource);
 
+    // 状態保存も normalizedFixed を使う
+    setFinalScores(normalizedFixed);
+    setSamuraiType(typeDisplay as any);
+    setComments(cmts);
+    safeSet('samurai-final-scores', normalizedFixed);
+    safeSet('samurai-type', typeDisplay);
+    safeSet('samurai-comments', cmts);
+    
     // 6) 画面状態＆ローカル保存
     setFinalScores(normalized);
     setSamuraiType(typeDisplay as unknown as SamuraiType);

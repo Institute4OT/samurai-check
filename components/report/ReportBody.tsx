@@ -40,6 +40,7 @@ const DEFAULT_LABELS: Record<keyof NormalizedCategoryScores, string> = {
   updatePower: 'アップデート力',
   genGap: 'ジェネギャップ感覚',
   harassmentAwareness: '無自覚ハラ傾向',
+  harassmentRisk: '無自覚ハラスメント傾向', // ← これを追加
 };
 
 function top2Bottom2(scores: NormalizedCategoryScores) {
