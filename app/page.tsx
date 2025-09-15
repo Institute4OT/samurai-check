@@ -26,15 +26,12 @@ import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
 
 const NONE_LABELS = new Set(['該当するものはない', '該当なし', '特になし']);
 
-// localStorage セーフ書き込み（例外を無視）
 function safeSet(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
 }
 
-// ★ 型エラー回避：内部構築は汎用マップ→最後に ScoreMap へキャスト
+// スコアマップ構築は内部で汎用マップ→最後に ScoreMap へキャスト（型安全より実行安定優先）
 type AnyScoreMap = Record<string, Record<string, number>>;
-
-// quizQuestions から ScoreMap を生成（選択肢の text と score を吸い上げ）
 function buildScoreMap(questions: QuizQuestionType[]): ScoreMap {
   const map: AnyScoreMap = {};
   for (const q of questions) {
@@ -63,7 +60,7 @@ export default function Home() {
   const [comments, setComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
   const [rid, setRid] = useState<string | null>(null);
 
-  // ❶ 表示順に並び替え（設問順はDISPLAY_ORDER、選択肢だけシャッフル）
+  // ❶ 表示順（設問順はDISPLAY_ORDER、選択肢のみシャッフル）
   const computedOrdered = useMemo<QuizQuestionType[]>(() => {
     const byId = new Map(quizQuestions.map((q) => [q.id, q]));
     return DISPLAY_ORDER
@@ -73,7 +70,7 @@ export default function Home() {
   }, []);
   useEffect(() => setOrderedQuestions(computedOrdered), [computedOrdered]);
 
-  // ❷ スコアマップを一度だけ構築
+  // ❷ スコアマップ（採点テーブル）を一度だけ構築
   const scoreMap = useMemo<ScoreMap>(() => buildScoreMap(quizQuestions), []);
 
   const startQuiz = () => {
@@ -103,7 +100,6 @@ export default function Home() {
 
       const { error } = await supabase.from('samurairesults').insert(payload).select();
       if (error) {
-        // UXは止めない
         console.warn('[supabase.insert] failed:', error);
       } else {
         setRid(generatedUserId);
@@ -134,7 +130,7 @@ export default function Home() {
     const updated = [...answers, newAnswer];
     setAnswers(updated);
 
-    // まだ続くなら次の設問へ
+    // まだ続くなら次へ
     if (pos < orderedQuestions.length) {
       setStep(`q${pos + 1}` as `q${number}`);
       setSelected([]);
@@ -146,21 +142,28 @@ export default function Home() {
     // 1) 監査用スナップショット（Q→選択肢[]）
     const snapshot: Record<string, string[]> = {};
     updated.forEach((a) => (snapshot[`Q${a.questionId}`] = a.selectedAnswers));
-    // ★ Finalize 用にも保存
-    safeSet('samurai-score-pattern', snapshot);
+    safeSet('samurai-score-pattern', snapshot); // Finalize 用にも保存
 
-    // 2) スコア計算：answers配列をそのまま渡す（実装は forEach を使うため）
+    // 2) “全Qを埋めた” completedAnswers を作る（未回答は []）
+    const allIds = quizQuestions.map((qq) => qq.id);
+    const byId = new Map(updated.map((a) => [a.questionId, a.selectedAnswers]));
+    const completedAnswers = allIds.map((id) => ({
+      questionId: id,
+      selectedAnswers: byId.get(id) ?? [],
+    }));
+
+    // 3) スコア計算（scoring 実装は answers配列に対して forEach を使うため配列を渡す）
     const result = calculateCategoryScores(
-      updated as unknown as any, // ← 型はScorePatternだが実装はanswers配列を期待。ここで明示キャスト。
+      completedAnswers as unknown as any, // ← ランタイム実装優先（forEach）。型は any で吸収。
       scoreMap,
       { normalizeMode: 'auto', maxPerQuestion: 3 }
     );
 
-    // 3) 正規化 0〜3 & タイプ判定
+    // 4) 正規化 0〜3 & タイプ判定
     const normalized = result.normalized as NormalizedCategoryScores;
     const typeDisplay = String(judgeSamuraiType(normalized) ?? '');
 
-    // 4) コメント生成（日本語ラベルで渡す）
+    // 5) コメント生成（日本語ラベルで渡す）
     const commentSource: Record<string, number> = {
       '権限委譲・構造健全度': clamp03(normalized.delegation),
       '組織進化阻害': clamp03(normalized.orgDrag),
@@ -173,7 +176,7 @@ export default function Home() {
     };
     const cmts = generateScoreComments(commentSource);
 
-    // 5) 画面状態＆ローカル保存
+    // 6) 画面状態＆ローカル保存
     setFinalScores(normalized);
     setSamuraiType(typeDisplay as unknown as SamuraiType);
     setComments(cmts);
@@ -181,10 +184,10 @@ export default function Home() {
     safeSet('samurai-type', typeDisplay);
     safeSet('samurai-comments', cmts);
 
-    // 6) Supabase に“行だけ”作成（失敗しても続行）
+    // 7) Supabase に“行だけ”作成（失敗しても続行）
     createRowInSupabase(snapshot, typeDisplay);
 
-    // 7) 結果へ
+    // 8) 結果へ
     setStep('result');
     setSelected([]);
   };
@@ -256,13 +259,11 @@ export default function Home() {
           q.isMultipleChoice
             ? (v) => {
                 setSelected((prev) => {
-                  // 「該当なし」を選ぶと他を外す
-                  if (NONE_LABELS.has(v)) return [v];
+                  if (NONE_LABELS.has(v)) return [v]; // 「該当なし」で他を外す
                   const withoutNone = prev.filter((x) => !NONE_LABELS.has(x));
                   const exists = withoutNone.includes(v);
                   if (exists) return withoutNone.filter((x) => x !== v);
-                  // 最大3つまで
-                  if (withoutNone.length >= 3) return withoutNone;
+                  if (withoutNone.length >= 3) return withoutNone; // 最大3つ
                   return [...withoutNone, v];
                 });
               }
