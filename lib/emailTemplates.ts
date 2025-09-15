@@ -1,180 +1,178 @@
 // /lib/emailTemplates.ts
-// ============================================================
-// メールテンプレート集（互換API + V2再エクスポート）
-// ============================================================
+// 目的：consult-intake（無料個別相談）のメール本文/件名を生成
+// - 呼び出し側の既存 import 名（buildConsultEmail, renderConsultIntakeMailToUser, renderConsultIntakeMailToOps）をすべて用意
+// - 受け取る payload は柔らかく any/Record<string, any> で受ける（既存APIの形の差異に耐える）
+// - 宛名は必ず「様」付与
+// - 担当者に応じて Spir 予約URLを差し込める（環境変数で設定）
 
-export type MailRender = {
-  subject: string;
-  html: string;
-  text: string;
-};
+type MailParts = { subject: string; html: string; text: string };
 
-// ------------------------------------------------------------
-// 環境
-// ------------------------------------------------------------
-const APP_BASE = (
-  process.env.NEXT_PUBLIC_APP_URL ||
-  process.env.NEXT_PUBLIC_BASE_URL ||
-  "http://localhost:3000"
-).replace(/\/$/, "");
+const SITE_NAME = 'IOT（企業の未来づくり研究所）';
+const BRAND = '武将タイプ診断';
+const SUPPORT = 'support@ourdx-mtg.com'; // 必要なら変更
 
-export const REPORT_URL = `${APP_BASE}/report`;
-const BOOKING_BASE = (
-  process.env.NEXT_PUBLIC_BOOKING_URL || `${APP_BASE}/consult`
-).replace(/\/$/, "");
-
-// ------------------------------------------------------------
-// ユーティリティ
-// ------------------------------------------------------------
-function stripTags(html: string) {
-  return html.replace(/<[^>]+>/g, "");
+// 予約URL（未設定時は # を返す）
+function getSpirUrl(assignee?: string): string {
+  const key = String(assignee ?? 'auto').toLowerCase();
+  const byKey: Record<string, string | undefined> = {
+    auto: process.env.NEXT_PUBLIC_SPIR_URL_AUTO,
+    ishijima: process.env.NEXT_PUBLIC_SPIR_URL_ISHIJIMA,
+    morigami: process.env.NEXT_PUBLIC_SPIR_URL_MORIGAMI,
+  };
+  return byKey[key] || byKey['auto'] || '#';
 }
 
-function ensureSama(name?: string | null) {
-  const base = (name ?? "").trim();
-  if (!base) return "ご担当者様";
-  return /様$/.test(base) ? base : `${base} 様`;
+function withSama(name: unknown): string {
+  const s = String(name ?? '').trim();
+  if (!s) return 'ご担当者様';
+  return /様$/.test(s) ? s : s + ' 様';
 }
 
-function withRidAndEmail(
-  url: string,
-  rid?: string,
-  email?: string,
-  campaign?: string,
-) {
-  const u = new URL(url);
-  if (rid) u.searchParams.set("rid", rid);
-  if (email) u.searchParams.set("email", email);
-  if (campaign) {
-    if (!u.searchParams.has("utm_source"))
-      u.searchParams.set("utm_source", "email");
-    if (!u.searchParams.has("utm_medium"))
-      u.searchParams.set("utm_medium", "transactional");
-    if (!u.searchParams.has("utm_campaign"))
-      u.searchParams.set("utm_campaign", campaign);
+function safe(v: unknown): string {
+  const s = String(v ?? '').trim();
+  return s || '—';
+}
+
+function bullet(list: unknown): string {
+  if (Array.isArray(list) && list.length) {
+    return list.map((x) => `・${String(x)}`).join('\n');
   }
-  return u.toString();
+  return '—';
 }
 
-// 予約URL（Spir等のURLがなければ汎用の /consult）
-function bookingUrlFor(email?: string, rid?: string, spirUrl?: string) {
-  const base = (spirUrl && spirUrl.trim()) || BOOKING_BASE;
-  return withRidAndEmail(base, rid, email, "consult_cta");
+function kvHtml(label: string, value: string) {
+  return `<tr><td style="padding:4px 8px;color:#64748b;white-space:nowrap">${label}</td><td style="padding:4px 8px">${value}</td></tr>`;
 }
 
-// ------------------------------------------------------------
-// 相談系（ユーザー向け/社内向け）
-// ------------------------------------------------------------
-export type Consultant = {
-  name?: string | null;
-  email: string;
-  company?: string | null;
-  note?: string | null;
-  /** 任意：担当者固有の予約URL（あれば優先） */
-  spirUrl?: string | null;
-  /** 任意：結果ID（rid） */
-  resultId?: string | null;
-};
+function wrapHtml(inner: string) {
+  return `<!doctype html><html><body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,Meiryo,'Hiragino Kaku Gothic ProN',sans-serif;line-height:1.6;color:#111827">
+<div style="max-width:720px;margin:24px auto;padding:16px 20px;border:1px solid #e5e7eb;border-radius:12px">
+${inner}
+<p style="margin-top:24px;font-size:12px;color:#6b7280">本メールは ${SITE_NAME} の自動送信です。心当たりがない場合はこのメールに返信でお知らせください。</p>
+</div></body></html>`;
+}
 
-export function renderConsultIntakeMailToUser(input: Consultant): MailRender {
-  const to = ensureSama(input.name);
-  const rid = input.resultId ?? undefined;
-  const btnUrl = bookingUrlFor(input.email, rid, input.spirUrl ?? undefined);
+// ===== ユーザー宛て =====
+export function renderConsultIntakeMailToUser(payload: Record<string, any>): MailParts {
+  const name = withSama(payload?.name ?? payload?.yourName);
+  const rid = safe(payload?.rid);
+  const assignee = String(payload?.assignee ?? 'auto').toLowerCase();
+  const spir = getSpirUrl(assignee);
 
-  const subject = "【IOT】無料個別相談のご案内（お申し込み受付）";
-  const html = `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto;line-height:1.7;color:#111">
-      <p>${to}</p>
-      <p>IOT（企業の未来づくり研究所）への無料個別相談のお申し込みを受け付けました。</p>
-      <p>担当者からのご連絡をお待ちいただくとともに、以下のボタンからも日程をご予約いただけます。</p>
-      <p style="margin:16px 0">
-        <a href="${btnUrl}" style="display:inline-block;padding:12px 16px;background:#111;color:#fff;text-decoration:none;border-radius:8px">
-          ▶ 無料個別相談を予約する
-        </a>
-      </p>
-      <p style="font-size:12px;color:#555">※ 本メールにそのままご返信いただいてもOKです。</p>
-      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
-      <p style="font-size:12px;color:#555">お申し込みメール：${input.email}</p>
-    </div>
-  `.trim();
+  const subject = `【${BRAND}】無料個別相談を受け付けました（ID: ${rid}）`;
 
+  const html = wrapHtml(`
+<p>${name}</p>
+<p>${SITE_NAME} です。無料個別相談のお申込みを受け付けました。担当より内容を確認の上、ご連絡いたします。</p>
+<p>早めに日程を確定されたい場合は、以下のボタンからご都合の良い日時をお選びください。</p>
+<p style="margin:16px 0"><a href="${spir}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">日程を予約する</a></p>
+<table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:14px">
+${kvHtml('結果ID（rid）', rid)}
+${kvHtml('お名前', safe(payload?.name ?? payload?.yourName))}
+${kvHtml('メール', safe(payload?.email))}
+${kvHtml('会社名', safe(payload?.company))}
+${kvHtml('会社規模', safe(payload?.companySize))}
+${kvHtml('業種', safe(payload?.industry))}
+${kvHtml('年齢', safe(payload?.age))}
+${kvHtml('ご相談トピック', bullet(payload?.topics ?? payload?.consultTopics))}
+${kvHtml('到達したい状態', bullet(payload?.desiredStates))}
+${kvHtml('いまのボトルネック', bullet(payload?.bottlenecks))}
+${kvHtml('優先的に取り組みたいテーマ', bullet(payload?.priorityThemes))}
+${kvHtml('希望スタイル', safe(payload?.style))}
+${kvHtml('担当の希望', safe(payload?.assignee))}
+</table>
+<p style="margin-top:16px">※このメールにそのまま返信していただいても大丈夫です。</p>
+<p style="margin-top:8px;font-size:12px;color:#6b7280">発行：${SITE_NAME}／お問い合わせ：${SUPPORT}</p>
+`);
+
+  const text = [
+    `${name}`,
+    `${SITE_NAME} です。無料個別相談のお申込みを受け付けました。`,
+    `▼日程予約リンク`,
+    `${spir}`,
+    ``,
+    `■結果ID: ${rid}`,
+    `■お名前: ${safe(payload?.name ?? payload?.yourName)}`,
+    `■メール: ${safe(payload?.email)}`,
+    `■会社名: ${safe(payload?.company)}`,
+    `■会社規模: ${safe(payload?.companySize)}`,
+    `■業種: ${safe(payload?.industry)}`,
+    `■年齢: ${safe(payload?.age)}`,
+    `■ご相談トピック:\n${bullet(payload?.topics ?? payload?.consultTopics)}`,
+    `■到達したい状態:\n${bullet(payload?.desiredStates)}`,
+    `■いまのボトルネック:\n${bullet(payload?.bottlenecks)}`,
+    `■優先的に取り組みたいテーマ:\n${bullet(payload?.priorityThemes)}`,
+    `■希望スタイル: ${safe(payload?.style)}`,
+    `■担当の希望: ${safe(payload?.assignee)}`,
+    ``,
+    `このメールに返信でご連絡いただけます（${SUPPORT}）。`,
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+// ===== 運用宛て（内部通知） =====
+export function renderConsultIntakeMailToOps(payload: Record<string, any>): MailParts {
+  const rid = safe(payload?.rid);
+  const assignee = String(payload?.assignee ?? 'auto').toLowerCase();
+  const spir = getSpirUrl(assignee);
+
+  const subject = `【相談申込】${safe(payload?.name ?? payload?.yourName)}／ID:${rid}`;
+
+  const html = wrapHtml(`
+<p>無料個別相談の申込を受け付けました。</p>
+<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:14px">
+${kvHtml('結果ID（rid）', rid)}
+${kvHtml('氏名', safe(payload?.name ?? payload?.yourName))}
+${kvHtml('メール', safe(payload?.email))}
+${kvHtml('会社名', safe(payload?.company))}
+${kvHtml('会社規模', safe(payload?.companySize))}
+${kvHtml('業種', safe(payload?.industry))}
+${kvHtml('年齢', safe(payload?.age))}
+${kvHtml('担当の希望', safe(payload?.assignee))}
+${kvHtml('Spir予約', `<a href="${spir}">${spir}</a>`)}
+${kvHtml('ご相談トピック', bullet(payload?.topics ?? payload?.consultTopics))}
+${kvHtml('到達したい状態', bullet(payload?.desiredStates))}
+${kvHtml('いまのボトルネック', bullet(payload?.bottlenecks))}
+${kvHtml('優先テーマ', bullet(payload?.priorityThemes))}
+${kvHtml('希望スタイル', safe(payload?.style))}
+</table>
+<p style="margin-top:12px;color:#6b7280">（この通知は自動送信）</p>
+`);
+
+  const text = [
+    `無料個別相談 申込を受信`,
+    `ID: ${rid}`,
+    `氏名: ${safe(payload?.name ?? payload?.yourName)}`,
+    `メール: ${safe(payload?.email)}`,
+    `会社: ${safe(payload?.company)}`,
+    `規模: ${safe(payload?.companySize)}`,
+    `業種: ${safe(payload?.industry)}`,
+    `年齢: ${safe(payload?.age)}`,
+    `担当希望: ${safe(payload?.assignee)}`,
+    `Spir: ${spir}`,
+    `---`,
+    `トピック:\n${bullet(payload?.topics ?? payload?.consultTopics)}`,
+    `到達したい状態:\n${bullet(payload?.desiredStates)}`,
+    `ボトルネック:\n${bullet(payload?.bottlenecks)}`,
+    `優先テーマ:\n${bullet(payload?.priorityThemes)}`,
+    `希望スタイル: ${safe(payload?.style)}`,
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+// ===== 旧呼び出し互換（buildConsultEmail） =====
+// 既存の route が `buildConsultEmail(payload)` を呼んでも動くよう統合して返す
+export function buildConsultIntakeEmail(payload: Record<string, any>): {
+  user: MailParts;
+  ops: MailParts;
+} {
   return {
-    subject,
-    html,
-    text: `${subject}\n\n${stripTags(html)}\n\n${btnUrl}`,
+    user: renderConsultIntakeMailToUser(payload),
+    ops: renderConsultIntakeMailToOps(payload),
   };
 }
 
-export function renderConsultIntakeMailToOps(input: Consultant): MailRender {
-  const title = "【IOT】相談受付（社内通知）";
-  const html = `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto;line-height:1.7;color:#111">
-      <p>相談受付がありました。</p>
-      <ul>
-        <li>お名前：${input.name ?? "-"}</li>
-        <li>メール：${input.email}</li>
-        <li>会社：${input.company ?? "-"}</li>
-        <li>メモ：${input.note ?? "-"}</li>
-        <li>rid：${input.resultId ?? "-"}</li>
-        <li>予約URL：${input.spirUrl ?? "-"}</li>
-      </ul>
-    </div>
-  `.trim();
-  return { subject: title, html, text: `${title}\n\n${stripTags(html)}` };
-}
-
-// ------------------------------------------------------------
-// 詳細レポート（従来版：/report/<rid> への導線）
-// ------------------------------------------------------------
-export type ReportEmailInput = {
-  id?: string; // rid
-  typeName?: string; // 例: 真田幸村型
-  toName?: string; // 宛名
-  email?: string; // 送信先(任意) → UTM付与に使う
-  reportUrl?: string; // 未指定なら REPORT_URL + /[id]
-  titlePrefix?: string; // 既定: 【武将タイプ診断】
-};
-
-export function buildReportEmail(input: ReportEmailInput): MailRender {
-  const rid = input.id ?? "unknown-id";
-  const typeName = input.typeName ?? "（タイプ判定中）";
-  const prefix = input.titlePrefix ?? "【武将タイプ診断】";
-  const to = ensureSama(input.toName);
-
-  const url = withRidAndEmail(
-    input.reportUrl ?? `${REPORT_URL}/${encodeURIComponent(rid)}`,
-    rid,
-    input.email,
-    "report_ready",
-  );
-
-  const subject = `${prefix} ▶ ${typeName} ｜ ■詳細レポートのご案内（シェア歓迎） （ID: ${rid}）`;
-
-  const html = `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto;line-height:1.7;color:#111">
-      <p>${to}、こんにちは。IOT（企業の未来づくり研究所）です。</p>
-      <p>診断の詳細レポートが整いました。以下よりご確認ください。</p>
-
-      <p style="margin:18px 0">
-        <a href="${url}" style="display:inline-block;padding:12px 16px;background:#111;color:#fff;text-decoration:none;border-radius:8px">
-          ▶ レポートを開く
-        </a>
-      </p>
-
-      <p><strong>🌟50名以下の組織の皆さまへ</strong><br/>診断アプリのご紹介・シェアにご協力ください。</p>
-      <p><strong>🌟51名以上の組織の皆さまへ</strong><br/>詳細レポート特典として<u>無料個別相談</u>をご案内しています。</p>
-
-      <hr style="border:none;border-top:1px solid #eee;margin:24px 0" />
-      <p>ご不明点はこのメールに<strong>そのまま返信</strong>してください。</p>
-      <p style="font-size:12px;color:#555">本メールは IOT の診断サービスより自動送信されています。</p>
-    </div>
-  `.trim();
-
-  return { subject, html, text: `${subject}\n\n${url}` };
-}
-
-// ------------------------------------------------------------
-// V2 拡張テンプレは別ファイルに実装
-// ------------------------------------------------------------
-export { buildReportEmailV2 } from "./emailTemplatesV2";
-export type { ReportEmailV2Input } from "./emailTemplatesV2";
+// 旧名での export を残す（後方互換）
+export const buildConsultEmail = buildConsultIntakeEmail;
