@@ -3,7 +3,11 @@ import { judgeSamuraiType } from "./lib/samuraiJudge";
 import type { SamuraiType, NormalizedCategoryScores } from "./types/diagnosis";
 
 // 期待パターン（NormalizedCategoryScores 形式）
-const testCases: { name: string; input: NormalizedCategoryScores; expected: SamuraiType }[] = [
+const testCases: {
+  name: string;
+  input: NormalizedCategoryScores;
+  expected: SamuraiType;
+}[] = [
   {
     name: "真田幸村型（理想型）",
     input: {

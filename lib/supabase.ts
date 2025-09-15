@@ -1,21 +1,25 @@
 // /lib/supabase.ts
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /** ===== Supabase クライアント（公開キー） ===== */
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   // ビルド時に落ちるより、実行時に明示エラーの方がデバッグしやすい
   throw new Error(
-    '[lib/supabase] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY が未設定です。'
+    "[lib/supabase] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY が未設定です。",
   );
 }
 
 /** フロント用（匿名）クライアント。Auth セッションは保持しない */
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false },
-});
+export const supabase: SupabaseClient = createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  {
+    auth: { persistSession: false },
+  },
+);
 
 /** ===== 型（samurairesults テーブルの想定スキーマ） ===== */
 

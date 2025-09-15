@@ -51,7 +51,11 @@ export default function ConsultantPicker({
   showAuto = true,
   autoLabel,
 }: Props) {
+  // Hook はコンポーネント直下で1回だけ呼ぶ
   const autoId = useId();
+  const baseId = useId(); // 各コンサルのIDを組み立てるベース
+
+  const KEYS: ConsultantKey[] = ['ishijima', 'morigami'];
 
   return (
     <div className="space-y-3">
@@ -93,9 +97,10 @@ export default function ConsultantPicker({
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {(['ishijima', 'morigami'] as ConsultantKey[]).map((k) => {
+        {KEYS.map((k, idx) => {
           const c = CONSULTANTS[k];
-          const id = useId();
+          // map内では useId() を呼ばず、ベースIDから派生
+          const id = `assignee-${baseId}-${idx}`;
           const active = value === c.key;
 
           return (

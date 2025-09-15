@@ -1,14 +1,25 @@
 // /components/rid/RidSync.tsx
-'use client';
+"use client";
 
-import { useEffect } from 'react';
-import { ensureRid, isIdish, resolveRidFromEnv, syncRidEverywhere } from '@/lib/utils/resolveRid';
+import { useEffect } from "react";
+import {
+  ensureRid,
+  isIdish,
+  resolveRidFromEnv,
+  syncRidEverywhere,
+} from "@/lib/utils/resolveRid";
 
-/** 
+/**
  * rid を URL/Storage/Cookie に同期。
  * props.rid が無い場合でも、環境から解決 → それでも無ければ生成して同期。
  */
-export default function RidSync({ rid, alsoUrl = true }: { rid?: string | null; alsoUrl?: boolean }) {
+export default function RidSync({
+  rid,
+  alsoUrl = true,
+}: {
+  rid?: string | null;
+  alsoUrl?: boolean;
+}) {
   useEffect(() => {
     if (rid && isIdish(rid)) {
       syncRidEverywhere(rid, { alsoUrl });

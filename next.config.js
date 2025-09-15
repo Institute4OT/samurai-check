@@ -5,8 +5,8 @@ const nextConfig = {
     return [
       // 相談導線だけ維持
       {
-        source: '/consult',
-        destination: '/consult/start',
+        source: "/consult",
+        destination: "/consult/start",
         permanent: false,
       },
     ];

@@ -1,7 +1,7 @@
 // components/common/ShareButtons.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
 
 type Props = {
   /** 例: "豊臣秀吉型"（任意。未指定なら text または汎用文言を使用） */
@@ -13,11 +13,16 @@ type Props = {
   className?: string;
 };
 
-export default function ShareButtons({ typeName, url, text, className }: Props) {
-  const [origin, setOrigin] = useState<string>('');
+export default function ShareButtons({
+  typeName,
+  url,
+  text,
+  className,
+}: Props) {
+  const [origin, setOrigin] = useState<string>("");
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       // 明示URLが無ければ origin を確保（トップ誘導）
       setOrigin(window.location.origin);
     }
@@ -25,15 +30,15 @@ export default function ShareButtons({ typeName, url, text, className }: Props) 
 
   // URLを必ずstringに整形（未指定ならトップへ）
   const shareUrl = useMemo(() => {
-    const base = (url ?? origin ?? '').trim();
-    if (!base) return '';
-    return base.endsWith('/') ? base : `${base}/`;
+    const base = (url ?? origin ?? "").trim();
+    if (!base) return "";
+    return base.endsWith("/") ? base : `${base}/`;
   }, [url, origin]);
 
   // シェア文言（優先度：props.text > typeNameベース > 汎用）
   const shareText = useMemo(() => {
-    if (text && text.trim() !== '') return text;
-    if (typeName && typeName.trim() !== '') {
+    if (text && text.trim() !== "") return text;
+    if (typeName && typeName.trim() !== "") {
       return `私は「${typeName}」でした！AI時代の経営者 武将タイプ診断やってみた😆`;
     }
     return `AI時代の経営者 武将タイプ診断やってみた😆`;
@@ -45,31 +50,31 @@ export default function ShareButtons({ typeName, url, text, className }: Props) 
       text: encodeURIComponent(shareText),
       both: encodeURIComponent(`${shareText} ${shareUrl}`.trim()),
     }),
-    [shareUrl, shareText]
+    [shareUrl, shareText],
   );
 
   // 各サービスの公式エンドポイント（2025-08時点）
   // ※ FB/LinkedIn は本文プリセット不可。URLのみ。
   const items = [
     {
-      key: 'x',
-      label: 'X でシェア',
+      key: "x",
+      label: "X でシェア",
       href: `https://x.com/intent/post?text=${encoded.text}&url=${encoded.url}`,
     },
     {
-      key: 'line',
-      label: 'LINE でシェア',
+      key: "line",
+      label: "LINE でシェア",
       // 推奨：text= に「本文＋URL」をまとめて渡す
       href: `https://line.me/R/share?text=${encoded.both}`,
     },
     {
-      key: 'facebook',
-      label: 'Facebook でシェア',
+      key: "facebook",
+      label: "Facebook でシェア",
       href: `https://www.facebook.com/sharer/sharer.php?u=${encoded.url}`,
     },
     {
-      key: 'linkedin',
-      label: 'LinkedIn でシェア',
+      key: "linkedin",
+      label: "LinkedIn でシェア",
       href: `https://www.linkedin.com/sharing/share-offsite/?url=${encoded.url}`,
     },
   ] as const;
@@ -78,33 +83,37 @@ export default function ShareButtons({ typeName, url, text, className }: Props) 
     const w = 680;
     const h = 520;
     const top =
-      typeof window !== 'undefined'
+      typeof window !== "undefined"
         ? window.top!.outerHeight / 2 + window.top!.screenY - h / 2
         : 0;
     const left =
-      typeof window !== 'undefined'
+      typeof window !== "undefined"
         ? window.top!.outerWidth / 2 + window.top!.screenX - w / 2
         : 0;
     window.open(
       href,
-      '_blank',
-      `popup=yes,noopener,noreferrer,width=${w},height=${h},top=${top},left=${left}`
+      "_blank",
+      `popup=yes,noopener,noreferrer,width=${w},height=${h},top=${top},left=${left}`,
     );
   }
 
   async function copyAll() {
     try {
       await navigator.clipboard.writeText(`${shareText} ${shareUrl}`.trim());
-      alert('リンクと文章をコピーしました');
+      alert("リンクと文章をコピーしました");
     } catch {
-      alert('コピーに失敗しました。手動でコピーしてください。');
+      alert("コピーに失敗しました。手動でコピーしてください。");
     }
   }
 
   async function webShare() {
     if (navigator.share) {
       try {
-        await navigator.share({ title: '武将タイプ診断', text: shareText, url: shareUrl });
+        await navigator.share({
+          title: "武将タイプ診断",
+          text: shareText,
+          url: shareUrl,
+        });
       } catch {
         /* キャンセル等は無視 */
       }
@@ -114,7 +123,7 @@ export default function ShareButtons({ typeName, url, text, className }: Props) 
   }
 
   return (
-    <div className={`flex flex-wrap gap-2 justify-center ${className || ''}`}>
+    <div className={`flex flex-wrap gap-2 justify-center ${className || ""}`}>
       {items.map((it) => (
         <button
           key={it.key}

@@ -1,13 +1,13 @@
 // app/api/report-mail/route.ts
 /* eslint-disable no-console */
-import { NextRequest, NextResponse } from 'next/server';
-import { buildReportEmail } from '@/lib/emailTemplates';
-import { sendMail } from '@/lib/mail';
+import { NextRequest, NextResponse } from "next/server";
+import { buildReportEmail } from "@/lib/emailTemplates";
+import { sendMail } from "@/lib/mail";
 
 // buildReportEmail の第1引数型をそのまま取得（テンプレ実装に追従）
 type ReportEmailInput = Parameters<typeof buildReportEmail>[0];
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,23 +15,32 @@ export async function POST(req: NextRequest) {
     const data = (await req.json()) ?? {};
 
     // 既存実装に合わせた値の組み立て（無ければ既定値）
-    const email: string = (data.email ?? '').toString();
-    const toNameBase: string =
-      (data.userName ?? data.toName ?? data.recipientName ?? email.split('@')[0] ?? '').toString();
-    const toName = toNameBase || 'お客様';
+    const email: string = (data.email ?? "").toString();
+    const toNameBase: string = (
+      data.userName ??
+      data.toName ??
+      data.recipientName ??
+      email.split("@")[0] ??
+      ""
+    ).toString();
+    const toName = toNameBase || "お客様";
 
-    const samuraiType = data.samuraiType ?? data.type ?? 'unknown';
-    const companySize = data.company_size ?? data.companySize ?? 'unknown';
+    const samuraiType = data.samuraiType ?? data.type ?? "unknown";
+    const companySize = data.company_size ?? data.companySize ?? "unknown";
 
     const reportLink: string =
       data.reportLink ??
       data.reportUrl ??
-      (typeof location === 'object' ? `${location.origin}/report` : 'https://example.com/report');
+      (typeof location === "object"
+        ? `${location.origin}/report`
+        : "https://example.com/report");
 
     const consultLink: string =
       data.consultLink ??
       data.bookingUrl ??
-      (typeof location === 'object' ? `${location.origin}/consult` : 'https://example.com/consult');
+      (typeof location === "object"
+        ? `${location.origin}/consult`
+        : "https://example.com/consult");
 
     // オプション（存在すれば流す）
     const shareLink = data.shareLink;
@@ -68,7 +77,7 @@ export async function POST(req: NextRequest) {
     const mail = buildReportEmail(input);
 
     // 送信先：ユーザー or フォールバック
-    const to = (email || process.env.MAIL_TO_TRS || '').toString().trim();
+    const to = (email || process.env.MAIL_TO_TRS || "").toString().trim();
     if (to) {
       await sendMail({
         to,
@@ -82,13 +91,13 @@ export async function POST(req: NextRequest) {
       ok: true,
       to,
       subject: mail.subject,
-      htmlPreviewBytes: Buffer.byteLength(mail.html, 'utf8'),
+      htmlPreviewBytes: Buffer.byteLength(mail.html, "utf8"),
     });
   } catch (err: any) {
-    console.error('[api/report-mail] error:', err);
+    console.error("[api/report-mail] error:", err);
     return NextResponse.json(
       { ok: false, error: err?.message ?? String(err) },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

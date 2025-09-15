@@ -1,25 +1,25 @@
 // app/report/page.tsx
-import { notFound } from 'next/navigation';
-import ReportTemplate from '@/components/report/ReportTemplate';
-import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
-import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
-import { TYPE_CONTENTS } from '@/lib/report/typeContents';
-import { judgeSamurai } from '@/lib/samuraiJudge';
-import { ensureHarassmentAliases } from '@/lib/harassmentKey';
+import { notFound } from "next/navigation";
+import ReportTemplate from "@/components/report/ReportTemplate";
+import type { NormalizedCategoryScores, SamuraiType } from "@/types/diagnosis";
+import { z } from "zod";
+import { createClient } from "@supabase/supabase-js";
+import { TYPE_CONTENTS } from "@/lib/report/typeContents";
+import { judgeSamurai } from "@/lib/samuraiJudge";
+import { ensureHarassmentAliases } from "@/lib/harassmentKey";
 
 export const revalidate = 0;
 
 /* ===================== 型 & バリデーション ===================== */
 
 const SamuraiTypeEnum = z.enum([
-  '真田幸村型',
-  '今川義元型',
-  '斎藤道三型',
-  '織田信長型',
-  '豊臣秀吉型',
-  '徳川家康型',
-  '上杉謙信型',
+  "真田幸村型",
+  "今川義元型",
+  "斎藤道三型",
+  "織田信長型",
+  "豊臣秀吉型",
+  "徳川家康型",
+  "上杉謙信型",
 ]);
 
 // harassmentRisk は互換用で optional（来ても受け入れる）
@@ -45,7 +45,9 @@ type PageProps = {
 
 /* ===================== ユーティリティ ===================== */
 
-function parseScoresFromParam(raw?: string | null): NormalizedCategoryScores | undefined {
+function parseScoresFromParam(
+  raw?: string | null,
+): NormalizedCategoryScores | undefined {
   if (!raw) return undefined;
   try {
     const obj = JSON.parse(raw);
@@ -67,9 +69,9 @@ async function fetchFromSupabase(id: string): Promise<{
 
   const supabase = createClient(supabaseUrl, anonKey);
   const { data, error } = await supabase
-    .from('diagnoses')
-    .select('id, company_size, samurai_type, normalized_scores')
-    .eq('id', id)
+    .from("diagnoses")
+    .select("id, company_size, samurai_type, normalized_scores")
+    .eq("id", id)
     .limit(1)
     .maybeSingle();
 
@@ -86,7 +88,12 @@ async function fetchFromSupabase(id: string): Promise<{
     scores = undefined;
   }
 
-  return { id: data.id as string, company_size: (data.company_size as string | undefined) ?? 'unknown', type, scores };
+  return {
+    id: data.id as string,
+    company_size: (data.company_size as string | undefined) ?? "unknown",
+    type,
+    scores,
+  };
 }
 
 /* ===================== ページ本体 ===================== */
@@ -95,7 +102,10 @@ export default async function ReportPage({ searchParams }: PageProps) {
   // 1) クエリ正規化
   const params = ParamsSchema.safeParse(
     Object.fromEntries(
-      Object.entries(searchParams ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
+      Object.entries(searchParams ?? {}).map(([k, v]) => [
+        k,
+        Array.isArray(v) ? v[0] : v,
+      ]),
     ),
   );
   if (!params.success) return notFound();
@@ -116,7 +126,8 @@ export default async function ReportPage({ searchParams }: PageProps) {
 
   // 3) URLパラメータの scores をフォールバックで採用
   if (!normalizedScores && params.data.scores) {
-    normalizedScores = parseScoresFromParam(params.data.scores) ?? normalizedScores;
+    normalizedScores =
+      parseScoresFromParam(params.data.scores) ?? normalizedScores;
   }
 
   // 4) ここまででスコアが無ければ404
@@ -143,10 +154,10 @@ export default async function ReportPage({ searchParams }: PageProps) {
   return (
     <main className="container py-6">
       <ReportTemplate
-        diagId={diagId ?? 'N/A'}
+        diagId={diagId ?? "N/A"}
         samuraiType={samuraiType}
         normalizedScores={normalizedScores}
-        companySize={companySize ?? 'unknown'}
+        companySize={companySize ?? "unknown"}
         content={content}
         openChat={{
           qrSrc: process.env.NEXT_PUBLIC_OPENCHAT_QR ?? undefined,
@@ -154,8 +165,8 @@ export default async function ReportPage({ searchParams }: PageProps) {
         }}
         brandLogoSrc="/images/iot-logo.svg"
         brandSiteUrl="https://ourdx-mtg.com/"
-        shareUrl={process.env.NEXT_PUBLIC_SHARE_URL ?? '#'}
-        consultUrl={process.env.NEXT_PUBLIC_CONSULT_URL ?? '#'}
+        shareUrl={process.env.NEXT_PUBLIC_SHARE_URL ?? "#"}
+        consultUrl={process.env.NEXT_PUBLIC_CONSULT_URL ?? "#"}
       />
     </main>
   );

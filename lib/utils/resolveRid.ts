@@ -5,7 +5,8 @@
 export function isIdish(v: string | null | undefined): v is string {
   if (!v) return false;
   const s = v.trim();
-  const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const uuid =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/; // Crockford
   const generic = /^[A-Za-z0-9_-]{16,}$/;
   return uuid.test(s) || ulid.test(s) || generic.test(s);
@@ -17,23 +18,35 @@ export function resolveRidFromEnv(): string | null {
     // 1) URLクエリ
     const u = new URL(window.location.href);
     const q =
-      u.searchParams.get('rid') ||
-      u.searchParams.get('resultId') ||
-      u.searchParams.get('id');
+      u.searchParams.get("rid") ||
+      u.searchParams.get("resultId") ||
+      u.searchParams.get("id");
     if (isIdish(q)) return q!.trim();
 
     // 2) パス末尾
-    const segs = window.location.pathname.split('/').filter(Boolean);
+    const segs = window.location.pathname.split("/").filter(Boolean);
     for (let i = segs.length - 1; i >= 0; i--) {
-      const s = decodeURIComponent(segs[i] || '');
+      const s = decodeURIComponent(segs[i] || "");
       if (isIdish(s)) return s.trim();
     }
 
     // 3) Storage 群
-    const keys = ['samurai:rid','samurai_last_rid','reportRid','resultId','rid'];
+    const keys = [
+      "samurai:rid",
+      "samurai_last_rid",
+      "reportRid",
+      "resultId",
+      "rid",
+    ];
     for (const k of keys) {
-      try { const v = localStorage.getItem(k);   if (isIdish(v)) return v!.trim(); } catch {}
-      try { const v = sessionStorage.getItem(k); if (isIdish(v)) return v!.trim(); } catch {}
+      try {
+        const v = localStorage.getItem(k);
+        if (isIdish(v)) return v!.trim();
+      } catch {}
+      try {
+        const v = sessionStorage.getItem(k);
+        if (isIdish(v)) return v!.trim();
+      } catch {}
     }
 
     // 4) Cookie
@@ -53,11 +66,11 @@ export function syncRidEverywhere(rid: string, opts?: { alsoUrl?: boolean }) {
   const r = rid.trim();
 
   try {
-    localStorage.setItem('samurai:rid', r);
-    localStorage.setItem('samurai_last_rid', r);
+    localStorage.setItem("samurai:rid", r);
+    localStorage.setItem("samurai_last_rid", r);
   } catch {}
   try {
-    sessionStorage.setItem('samurai:rid', r);
+    sessionStorage.setItem("samurai:rid", r);
   } catch {}
   try {
     document.cookie = `samurai_rid=${encodeURIComponent(r)}; Path=/; Max-Age=1800; SameSite=Lax`;
@@ -67,10 +80,10 @@ export function syncRidEverywhere(rid: string, opts?: { alsoUrl?: boolean }) {
     try {
       const url = new URL(window.location.href);
       // 両方のキーを揃えておく（互換のため）
-      url.searchParams.set('rid', r);
-      url.searchParams.set('resultId', r);
+      url.searchParams.set("rid", r);
+      url.searchParams.set("resultId", r);
       // 同じパスで置換（履歴は汚さない）
-      window.history.replaceState(null, '', url.toString());
+      window.history.replaceState(null, "", url.toString());
     } catch {}
   }
 }

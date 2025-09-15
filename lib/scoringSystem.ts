@@ -12,7 +12,7 @@ import type {
   RawCategoryScores,
   ScorePattern,
   QuestionId,
-} from '@/types/diagnosis';
+} from "@/types/diagnosis";
 
 /* ===================== 設問→カテゴリの紐づけ ===================== */
 // 仕様メモ（2025-07-22）
@@ -36,23 +36,23 @@ Q16＝ 無自覚ハラスメント傾向, 権限委譲・構造健全度 ← ★
 */
 
 const MAPPING: Record<QuestionId, CategoryKey[]> = {
-  Q1:  ['delegation'],
-  Q2:  ['orgDrag', 'harassmentAwareness'],
-  Q3:  ['orgDrag'],
-  Q4:  ['commGap'],
-  Q5:  ['updatePower', 'genGap'],
-  Q6:  ['updatePower', 'genGap'],
-  Q7:  ['updatePower'],
-  Q8:  ['orgDrag', 'commGap'],
-  Q9:  ['genGap', 'commGap'],
-  Q10: ['updatePower'],
-  Q11: ['orgDrag', 'harassmentAwareness', 'delegation'],
-  Q12: ['genGap', 'commGap'],
-  Q13: ['harassmentAwareness', 'delegation'],
-  Q14: ['delegation'],
+  Q1: ["delegation"],
+  Q2: ["orgDrag", "harassmentAwareness"],
+  Q3: ["orgDrag"],
+  Q4: ["commGap"],
+  Q5: ["updatePower", "genGap"],
+  Q6: ["updatePower", "genGap"],
+  Q7: ["updatePower"],
+  Q8: ["orgDrag", "commGap"],
+  Q9: ["genGap", "commGap"],
+  Q10: ["updatePower"],
+  Q11: ["orgDrag", "harassmentAwareness", "delegation"],
+  Q12: ["genGap", "commGap"],
+  Q13: ["harassmentAwareness", "delegation"],
+  Q14: ["delegation"],
   // ★ ここから追記（今回のクラッシュ原因）
-  Q15: ['harassmentAwareness', 'commGap'],
-  Q16: ['harassmentAwareness', 'delegation'],
+  Q15: ["harassmentAwareness", "commGap"],
+  Q16: ["harassmentAwareness", "delegation"],
 };
 
 /* ========================= 型と定数 ========================= */
@@ -60,8 +60,8 @@ const MAPPING: Record<QuestionId, CategoryKey[]> = {
 export type ScoreMap = Partial<Record<QuestionId, Record<string, number>>>;
 
 export type NormalizeMode =
-  | 'auto'      // 各カテゴリの「設問数×maxPerQuestion」で自動上限
-  | 'fixedMax'; // カテゴリごとに固定上限を明示（上級者向け）
+  | "auto" // 各カテゴリの「設問数×maxPerQuestion」で自動上限
+  | "fixedMax"; // カテゴリごとに固定上限を明示（上級者向け）
 
 export type ScoringOptions = {
   normalizeMode?: NormalizeMode;
@@ -87,12 +87,12 @@ export type ScoringResult = {
 /* ========================= ユーティリティ ========================= */
 
 const ALL_CATEGORIES: CategoryKey[] = [
-  'delegation',
-  'orgDrag',
-  'commGap',
-  'updatePower',
-  'genGap',
-  'harassmentAwareness',
+  "delegation",
+  "orgDrag",
+  "commGap",
+  "updatePower",
+  "genGap",
+  "harassmentAwareness",
 ];
 
 function makeEmptyRaw(): RawCategoryScores {
@@ -136,7 +136,7 @@ export function validatePattern(pattern: ScorePattern): {
 
   (Object.keys(pattern) as QuestionId[]).forEach((qid) => {
     if (!(qid in MAPPING)) unknownQids.push(qid);
-    if (!String((pattern as any)[qid] ?? '').trim()) emptyAnswers.push(qid);
+    if (!String((pattern as any)[qid] ?? "").trim()) emptyAnswers.push(qid);
   });
 
   return { unknownQids, emptyAnswers };
@@ -156,7 +156,7 @@ export function calculateCategoryScores(
   options: ScoringOptions = {},
 ): ScoringResult {
   const {
-    normalizeMode = 'auto',
+    normalizeMode = "auto",
     maxPerQuestion = 3,
     fixedMaxByCategory = {},
     weights = {},
@@ -199,7 +199,11 @@ export function calculateCategoryScores(
 
   const upperFinal: Record<CategoryKey, number> = {} as any;
   ALL_CATEGORIES.forEach((cat) => {
-    if (normalizeMode === 'fixedMax' && fixedMaxByCategory[cat] && fixedMaxByCategory[cat]! > 0) {
+    if (
+      normalizeMode === "fixedMax" &&
+      fixedMaxByCategory[cat] &&
+      fixedMaxByCategory[cat]! > 0
+    ) {
       upperFinal[cat] = fixedMaxByCategory[cat]!;
     } else {
       upperFinal[cat] = upperAuto[cat];
@@ -238,14 +242,18 @@ export function toRadarData(
 }
 
 export function getCategoryCeilTable(
-  mode: NormalizeMode = 'auto',
+  mode: NormalizeMode = "auto",
   maxPerQuestion = 3,
   fixedMaxByCategory: Partial<Record<CategoryKey, number>> = {},
 ): Record<CategoryKey, number> {
   const upper: Record<CategoryKey, number> = {} as any;
   ALL_CATEGORIES.forEach((cat) => {
     const auto = countQuestionsByCategory(cat) * maxPerQuestion;
-    if (mode === 'fixedMax' && fixedMaxByCategory[cat] && fixedMaxByCategory[cat]! > 0) {
+    if (
+      mode === "fixedMax" &&
+      fixedMaxByCategory[cat] &&
+      fixedMaxByCategory[cat]! > 0
+    ) {
       upper[cat] = fixedMaxByCategory[cat]!;
     } else {
       upper[cat] = auto;
@@ -259,10 +267,14 @@ export function getCategoryCeilTable(
 
 export type CategoryScores = Record<string, number>;
 
-export function debugScoreCalculation(pattern: any, answers: any, options: any = {}) {
+export function debugScoreCalculation(
+  pattern: any,
+  answers: any,
+  options: any = {},
+) {
   try {
     // @ts-ignore
-    if (typeof evaluateNormalizedCategoryScores === 'function') {
+    if (typeof evaluateNormalizedCategoryScores === "function") {
       // @ts-ignore
       return evaluateNormalizedCategoryScores(pattern, answers, options);
     }
@@ -270,14 +282,25 @@ export function debugScoreCalculation(pattern: any, answers: any, options: any =
 
   try {
     // @ts-ignore
-    if (typeof calculateCategoryScores === 'function') {
+    if (typeof calculateCategoryScores === "function") {
       // @ts-ignore
-      const cs = calculateCategoryScores(pattern, /* scoreMap */ undefined, options) as any;
-      const total = Object.values(cs || {}).reduce((a: number, b: any) => a + (Number(b) || 0), 0);
+      const cs = calculateCategoryScores(
+        pattern,
+        /* scoreMap */ undefined,
+        options,
+      ) as any;
+      const total = Object.values(cs || {}).reduce(
+        (a: number, b: any) => a + (Number(b) || 0),
+        0,
+      );
       return { categoryScores: cs || {}, total, _fallback: true as const };
     }
   } catch {}
 
-  return { categoryScores: {} as CategoryScores, total: 0, _fallback: true as const };
+  return {
+    categoryScores: {} as CategoryScores,
+    total: 0,
+    _fallback: true as const,
+  };
 }
 // ======================================================================

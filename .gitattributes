@@ -1,0 +1,9 @@
+# 既定はテキストをLFに
+* text=auto eol=lf
+
+# 例外（Windows専用のスクリプトはCRLFを維持したい場合）
+*.bat eol=crlf
+*.cmd eol=crlf
+
+# シェルはLF必須
+*.sh eol=lf

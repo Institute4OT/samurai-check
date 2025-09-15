@@ -1,8 +1,8 @@
 // components/StartScreen.tsx
-'use client';
+"use client";
 
-import React from 'react';
-import Footer from './Footer';
+import React from "react";
+import Footer from "./Footer";
 
 interface StartScreenProps {
   startQuiz: () => void;
@@ -21,7 +21,8 @@ export default function StartScreen({ startQuiz }: StartScreenProps) {
 
           {/* タイトル */}
           <h1 className="text-3xl md:text-5xl font-bold text-black leading-tight">
-            AI時代の経営者<br />
+            AI時代の経営者
+            <br />
             🏯武将タイプ診断🏯
           </h1>
 
@@ -40,7 +41,8 @@ export default function StartScreen({ startQuiz }: StartScreenProps) {
               <li>アップデート力／無自覚ハラスメント傾向</li>
             </ul>
             <p className="text-gray-600">
-              結果はその場で表示。ご希望の方には<strong>無料の詳細レポート</strong>もお届けします。
+              結果はその場で表示。ご希望の方には
+              <strong>無料の詳細レポート</strong>もお届けします。
             </p>
           </div>
 
@@ -56,7 +58,9 @@ export default function StartScreen({ startQuiz }: StartScreenProps) {
             {/* 補足（短く） */}
             <div className="text-sm md:text-base text-gray-500 space-y-1">
               <p>全16問／所要時間 3〜5分（従業員のいる経営者・役員向け）</p>
-              <p>※ 回答内容はレポート生成と統計的な傾向分析のみに利用します。</p>
+              <p>
+                ※ 回答内容はレポート生成と統計的な傾向分析のみに利用します。
+              </p>
             </div>
           </div>
         </div>

@@ -1,9 +1,9 @@
 // components/Footer.tsx
-'use client';
-import React from 'react';
-import ExternalLink from './ui/ExternalLink';
-import { ExternalLink as ExternalLinkIcon } from 'lucide-react';
-import Image from 'next/image';
+"use client";
+import React from "react";
+import ExternalLink from "./ui/ExternalLink";
+import { ExternalLink as ExternalLinkIcon } from "lucide-react";
+import Image from "next/image";
 
 export default function Footer() {
   return (
@@ -26,7 +26,11 @@ export default function Footer() {
           <span className="whitespace-nowrap font-medium">
             一般社団法人 企業の未来づくり研究所
           </span>
-          <ExternalLinkIcon size={14} className="opacity-70 shrink-0" aria-hidden="true" />
+          <ExternalLinkIcon
+            size={14}
+            className="opacity-70 shrink-0"
+            aria-hidden="true"
+          />
         </ExternalLink>
 
         {/* プライバシーポリシー＋特商法（2行目） */}

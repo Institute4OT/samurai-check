@@ -5,21 +5,21 @@ import type {
   CategoryKey,
   NormalizedCategoryScores,
   SamuraiType,
-} from '@/types/diagnosis';
-import { ensureHarassmentAliases } from '@/lib/harassmentKey';
+} from "@/types/diagnosis";
+import { ensureHarassmentAliases } from "@/lib/harassmentKey";
 
 /* ============================================================
    型・設定
    ============================================================ */
 
 export type RuleHit =
-  | 'SANADA_RULE'
-  | 'ODA_RULE'
-  | 'TOYOTOMI_RULE'
-  | 'TOKUGAWA_RULE'
-  | 'DOSAN_RULE'
-  | 'IMAGAWA_RULE'
-  | 'UESUGI_FALLBACK';
+  | "SANADA_RULE"
+  | "ODA_RULE"
+  | "TOYOTOMI_RULE"
+  | "TOKUGAWA_RULE"
+  | "DOSAN_RULE"
+  | "IMAGAWA_RULE"
+  | "UESUGI_FALLBACK";
 
 export type JudgeConfig = {
   /** カテゴリごとの重み（合致度スコア式で使用） */
@@ -80,30 +80,31 @@ export const defaultJudgeConfig: JudgeConfig = {
     imagawa_har_min: 2.0,
   },
   rulePriority: [
-    'SANADA_RULE',
-    'ODA_RULE',
-    'TOYOTOMI_RULE',
-    'TOKUGAWA_RULE',
-    'DOSAN_RULE',
-    'IMAGAWA_RULE',
-    'UESUGI_FALLBACK',
+    "SANADA_RULE",
+    "ODA_RULE",
+    "TOYOTOMI_RULE",
+    "TOKUGAWA_RULE",
+    "DOSAN_RULE",
+    "IMAGAWA_RULE",
+    "UESUGI_FALLBACK",
   ],
   tieBreakPriority: [
-    'updatePower',
-    'delegation',
-    'orgDrag',
-    'commGap',
-    'genGap',
-    'harassmentAwareness',
+    "updatePower",
+    "delegation",
+    "orgDrag",
+    "commGap",
+    "genGap",
+    "harassmentAwareness",
   ],
-  defaultFallback: '上杉謙信型',
+  defaultFallback: "上杉謙信型",
 };
 
 /* ============================================================
    util
    ============================================================ */
 
-const clamp03 = (v: number) => Math.max(0, Math.min(3, Number.isFinite(v) ? v : 0));
+const clamp03 = (v: number) =>
+  Math.max(0, Math.min(3, Number.isFinite(v) ? v : 0));
 const w = (v: number, weight: number) => clamp03(v) * weight;
 
 /** 配列 indexOf の安全版（未定義は最下位扱い） */
@@ -121,36 +122,45 @@ type RuleCheck = { hit: boolean; type: SamuraiType; rule: RuleHit };
 function checkSanada(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
   const t = c.thresholds;
   return {
-    hit: s.updatePower >= t.sanada_update_min && s.delegation >= t.sanada_delegation_min,
-    type: '真田幸村型',
-    rule: 'SANADA_RULE',
+    hit:
+      s.updatePower >= t.sanada_update_min &&
+      s.delegation >= t.sanada_delegation_min,
+    type: "真田幸村型",
+    rule: "SANADA_RULE",
   };
 }
 
 function checkOda(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
   const t = c.thresholds;
   return {
-    hit: s.updatePower >= t.oda_update_min && s.commGap <= t.oda_comm_max && s.genGap <= t.oda_gen_max,
-    type: '織田信長型',
-    rule: 'ODA_RULE',
+    hit:
+      s.updatePower >= t.oda_update_min &&
+      s.commGap <= t.oda_comm_max &&
+      s.genGap <= t.oda_gen_max,
+    type: "織田信長型",
+    rule: "ODA_RULE",
   };
 }
 
 function checkToyotomi(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
   const t = c.thresholds;
   return {
-    hit: s.updatePower >= t.toyotomi_update_min && s.commGap >= t.toyotomi_comm_min,
-    type: '豊臣秀吉型',
-    rule: 'TOYOTOMI_RULE',
+    hit:
+      s.updatePower >= t.toyotomi_update_min &&
+      s.commGap >= t.toyotomi_comm_min,
+    type: "豊臣秀吉型",
+    rule: "TOYOTOMI_RULE",
   };
 }
 
 function checkTokugawa(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
   const t = c.thresholds;
   return {
-    hit: s.delegation >= t.tokugawa_delegation_min && s.orgDrag <= t.tokugawa_org_max,
-    type: '徳川家康型',
-    rule: 'TOKUGAWA_RULE',
+    hit:
+      s.delegation >= t.tokugawa_delegation_min &&
+      s.orgDrag <= t.tokugawa_org_max,
+    type: "徳川家康型",
+    rule: "TOKUGAWA_RULE",
   };
 }
 
@@ -158,8 +168,8 @@ function checkDosan(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
   const t = c.thresholds;
   return {
     hit: s.orgDrag >= t.dosan_org_min,
-    type: '斎藤道三型',
-    rule: 'DOSAN_RULE',
+    type: "斎藤道三型",
+    rule: "DOSAN_RULE",
   };
 }
 
@@ -167,8 +177,8 @@ function checkImagawa(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
   const t = c.thresholds;
   return {
     hit: s.harassmentAwareness >= t.imagawa_har_min,
-    type: '今川義元型',
-    rule: 'IMAGAWA_RULE',
+    type: "今川義元型",
+    rule: "IMAGAWA_RULE",
   };
 }
 
@@ -193,45 +203,43 @@ export function compatibilityScoreByType(
   const wgt = cfg.weights;
 
   const sanada =
-    + w(s.updatePower, wgt.updatePower) * 1.2
-    + w(s.delegation, wgt.delegation) * 1.0
-    - w(s.orgDrag, wgt.orgDrag) * 0.6
-    - w(s.harassmentAwareness, wgt.harassmentAwareness) * 0.4;
+    +w(s.updatePower, wgt.updatePower) * 1.2 +
+    w(s.delegation, wgt.delegation) * 1.0 -
+    w(s.orgDrag, wgt.orgDrag) * 0.6 -
+    w(s.harassmentAwareness, wgt.harassmentAwareness) * 0.4;
 
   const oda =
-    + w(s.updatePower, wgt.updatePower) * 1.1
-    - w(s.commGap, wgt.commGap) * 0.9
-    - w(s.genGap, wgt.genGap) * 0.7;
+    +w(s.updatePower, wgt.updatePower) * 1.1 -
+    w(s.commGap, wgt.commGap) * 0.9 -
+    w(s.genGap, wgt.genGap) * 0.7;
 
   const toyotomi =
-    + w(s.updatePower, wgt.updatePower) * 0.9
-    + w(s.commGap, wgt.commGap) * 0.9;
+    +w(s.updatePower, wgt.updatePower) * 0.9 + w(s.commGap, wgt.commGap) * 0.9;
 
   const tokugawa =
-    + w(s.delegation, wgt.delegation) * 1.0
-    - w(s.orgDrag, wgt.orgDrag) * 1.0
-    - w(s.harassmentAwareness, wgt.harassmentAwareness) * 0.3;
+    +w(s.delegation, wgt.delegation) * 1.0 -
+    w(s.orgDrag, wgt.orgDrag) * 1.0 -
+    w(s.harassmentAwareness, wgt.harassmentAwareness) * 0.3;
 
   const dosan =
-    + w(s.orgDrag, wgt.orgDrag) * 1.1
-    - w(s.delegation, wgt.delegation) * 0.5;
+    +w(s.orgDrag, wgt.orgDrag) * 1.1 - w(s.delegation, wgt.delegation) * 0.5;
 
   const imagawa =
-    + w(s.harassmentAwareness, wgt.harassmentAwareness) * 1.1
-    - w(s.updatePower, wgt.updatePower) * 0.5;
+    +w(s.harassmentAwareness, wgt.harassmentAwareness) * 1.1 -
+    w(s.updatePower, wgt.updatePower) * 0.5;
 
   const uesugi =
-    + w(s.updatePower, wgt.updatePower) * 0.6
-    + w(s.delegation, wgt.delegation) * 0.6;
+    +w(s.updatePower, wgt.updatePower) * 0.6 +
+    w(s.delegation, wgt.delegation) * 0.6;
 
   return {
-    '真田幸村型': sanada,
-    '織田信長型': oda,
-    '豊臣秀吉型': toyotomi,
-    '徳川家康型': tokugawa,
-    '斎藤道三型': dosan,
-    '今川義元型': imagawa,
-    '上杉謙信型': uesugi,
+    真田幸村型: sanada,
+    織田信長型: oda,
+    豊臣秀吉型: toyotomi,
+    徳川家康型: tokugawa,
+    斎藤道三型: dosan,
+    今川義元型: imagawa,
+    上杉謙信型: uesugi,
   };
 }
 
@@ -255,9 +263,14 @@ export type ExplainResult = {
 };
 
 /** 強み寄与（平均） */
-export const STRONG_KEYS: CategoryKey[] = ['updatePower', 'delegation'];
+export const STRONG_KEYS: CategoryKey[] = ["updatePower", "delegation"];
 /** リスク抑制（平均） */
-export const RISK_KEYS: CategoryKey[] = ['orgDrag', 'commGap', 'genGap', 'harassmentAwareness'];
+export const RISK_KEYS: CategoryKey[] = [
+  "orgDrag",
+  "commGap",
+  "genGap",
+  "harassmentAwareness",
+];
 
 export function explainSamuraiDecision(
   scores0: NormalizedCategoryScores,
@@ -297,7 +310,7 @@ export function explainSamuraiDecision(
   let topGroup = byScore.filter((x) => Math.abs(x.score - topScore) < 1e-9);
 
   // 3) タイブレーク（順に比較）
-  const trace: ExplainResult['tieBreakTrace'] = [];
+  const trace: ExplainResult["tieBreakTrace"] = [];
   if (topGroup.length > 1) {
     for (const key of cfg.tieBreakPriority) {
       const values: Record<SamuraiType, number> = Object.create(null);
@@ -319,9 +332,7 @@ export function explainSamuraiDecision(
   }
 
   const decided: SamuraiType =
-    first?.type ??
-    topGroup[0]?.type ??
-    cfg.defaultFallback;
+    first?.type ?? topGroup[0]?.type ?? cfg.defaultFallback;
 
   return {
     decided,
@@ -337,7 +348,10 @@ export function explainSamuraiDecision(
    互換API
    ============================================================ */
 
-export function judgeSamurai(scores: NormalizedCategoryScores, cfg: JudgeConfig = defaultJudgeConfig): SamuraiType {
+export function judgeSamurai(
+  scores: NormalizedCategoryScores,
+  cfg: JudgeConfig = defaultJudgeConfig,
+): SamuraiType {
   return explainSamuraiDecision(scores, cfg).decided;
 }
 
@@ -349,11 +363,11 @@ export const judgeSamuraiType = judgeSamurai;
    - 他モジュールが `samuraiDescriptions` を期待しても落ちないようダミーを提供
    ============================================================ */
 export const samuraiDescriptions = {
-  SANADA: { title: '' } as any,
-  ODA: { title: '' } as any,
-  TOYOTOMI: { title: '' } as any,
-  TOKUGAWA: { title: '' } as any,
-  UESUGI: { title: '' } as any,
-  SAITO: { title: '' } as any,
-  IMAGAWA: { title: '' } as any,
+  SANADA: { title: "" } as any,
+  ODA: { title: "" } as any,
+  TOYOTOMI: { title: "" } as any,
+  TOKUGAWA: { title: "" } as any,
+  UESUGI: { title: "" } as any,
+  SAITO: { title: "" } as any,
+  IMAGAWA: { title: "" } as any,
 } as any;

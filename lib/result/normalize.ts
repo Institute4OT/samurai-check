@@ -13,14 +13,14 @@ import type {
   CategoryKey,
   NormalizedCategoryScores,
   SamuraiType,
-} from '@/types/diagnosis';
-import { ensureHarassmentAliases } from '@/lib/harassmentKey';
+} from "@/types/diagnosis";
+import { ensureHarassmentAliases } from "@/lib/harassmentKey";
 import {
-  CATEGORY_ORDER as CATEGORY_KEYS,          // 正式6カテゴリの順序配列
-  DEFAULT_LABELS as LABELS_BY_CATEGORY,     // ラベル表（awareness/risk 両方あり）
-} from '@/lib/report/categoryNormalize';
-import { judgeSamurai } from '@/lib/samuraiJudge';
-import { z } from 'zod';
+  CATEGORY_ORDER as CATEGORY_KEYS, // 正式6カテゴリの順序配列
+  DEFAULT_LABELS as LABELS_BY_CATEGORY, // ラベル表（awareness/risk 両方あり）
+} from "@/lib/report/categoryNormalize";
+import { judgeSamurai } from "@/lib/samuraiJudge";
+import { z } from "zod";
 
 /* ========== 基本ユーティリティ ========== */
 
@@ -34,39 +34,58 @@ export { CATEGORY_KEYS, LABELS_BY_CATEGORY };
 
 export const ALIASES: Record<string, CategoryKey> = {
   // delegation
-  delegation: 'delegation',
-  deleg: 'delegation',
-  delegation_score: 'delegation',
-  delegationlevel: 'delegation',
-  '権限委譲・構造健全度': 'delegation',
-  権限委譲: 'delegation', 構造健全度: 'delegation',
+  delegation: "delegation",
+  deleg: "delegation",
+  delegation_score: "delegation",
+  delegationlevel: "delegation",
+  "権限委譲・構造健全度": "delegation",
+  権限委譲: "delegation",
+  構造健全度: "delegation",
   // orgDrag
-  orgdrag: 'orgDrag', org_drag: 'orgDrag', organizationaldrag: 'orgDrag',
-  '組織進化阻害': 'orgDrag', '組織の足かせ': 'orgDrag',
+  orgdrag: "orgDrag",
+  org_drag: "orgDrag",
+  organizationaldrag: "orgDrag",
+  組織進化阻害: "orgDrag",
+  組織の足かせ: "orgDrag",
   // commGap
-  commgap: 'commGap', comm_gap: 'commGap', communicationgap: 'commGap',
-  'コミュ力誤差': 'commGap', 'コミュニケーションギャップ': 'commGap',
+  commgap: "commGap",
+  comm_gap: "commGap",
+  communicationgap: "commGap",
+  コミュ力誤差: "commGap",
+  コミュニケーションギャップ: "commGap",
   // updatePower
-  updatepower: 'updatePower', update_power: 'updatePower', learningpower: 'updatePower',
-  'アップデート力': 'updatePower', 学習力: 'updatePower', 変化対応力: 'updatePower', 改善力: 'updatePower',
+  updatepower: "updatePower",
+  update_power: "updatePower",
+  learningpower: "updatePower",
+  アップデート力: "updatePower",
+  学習力: "updatePower",
+  変化対応力: "updatePower",
+  改善力: "updatePower",
   // genGap
-  gengap: 'genGap', gen_gap: 'genGap', generationgap: 'genGap',
-  'ジェネギャップ感覚': 'genGap', 世代ギャップ: 'genGap',
+  gengap: "genGap",
+  gen_gap: "genGap",
+  generationgap: "genGap",
+  ジェネギャップ感覚: "genGap",
+  世代ギャップ: "genGap",
   // harassmentAwareness（互換：harassmentRisk も寄せる）
-  harassmentawareness: 'harassmentAwareness',
-  harassment_awareness: 'harassmentAwareness',
-  harassment: 'harassmentAwareness',
-  '無自覚ハラスメント傾向': 'harassmentAwareness',
-  '無自覚ハラ傾向': 'harassmentAwareness',
-  'ハラスメント傾向': 'harassmentAwareness',
-  powahara: 'harassmentAwareness', sekuhara: 'harassmentAwareness',
+  harassmentawareness: "harassmentAwareness",
+  harassment_awareness: "harassmentAwareness",
+  harassment: "harassmentAwareness",
+  無自覚ハラスメント傾向: "harassmentAwareness",
+  無自覚ハラ傾向: "harassmentAwareness",
+  ハラスメント傾向: "harassmentAwareness",
+  powahara: "harassmentAwareness",
+  sekuhara: "harassmentAwareness",
   // 互換キー
-  harassmentrisk: 'harassmentAwareness', harassment_risk: 'harassmentAwareness',
+  harassmentrisk: "harassmentAwareness",
+  harassment_risk: "harassmentAwareness",
 };
 
 export function normalizeCategoryKey(raw: string): CategoryKey | undefined {
   if (!raw) return undefined;
-  const k = String(raw).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const k = String(raw)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
   return (ALIASES as Record<string, CategoryKey | undefined>)[k];
 }
 
@@ -82,9 +101,16 @@ export const NormalizedScoresSchema = z.object({
   harassmentRisk: z.number().min(0).max(3).optional(),
 }) as z.ZodType<NormalizedCategoryScores>;
 
-export function coerceFromLooseObject(obj: Record<string, any>): NormalizedCategoryScores {
+export function coerceFromLooseObject(
+  obj: Record<string, any>,
+): NormalizedCategoryScores {
   const base: Record<CategoryKey, number> = {
-    delegation: 0, orgDrag: 0, commGap: 0, updatePower: 0, genGap: 0, harassmentAwareness: 0,
+    delegation: 0,
+    orgDrag: 0,
+    commGap: 0,
+    updatePower: 0,
+    genGap: 0,
+    harassmentAwareness: 0,
   };
   for (const [k, v] of Object.entries(obj)) {
     const key = normalizeCategoryKey(k);
@@ -94,10 +120,13 @@ export function coerceFromLooseObject(obj: Record<string, any>): NormalizedCateg
   return ensureHarassmentAliases(base as unknown as NormalizedCategoryScores);
 }
 
-export function coerceNormalized(input: unknown): NormalizedCategoryScores | undefined {
+export function coerceNormalized(
+  input: unknown,
+): NormalizedCategoryScores | undefined {
   const p = NormalizedScoresSchema.safeParse(input);
   if (p.success) return ensureHarassmentAliases(p.data);
-  if (input && typeof input === 'object') return coerceFromLooseObject(input as Record<string, any>);
+  if (input && typeof input === "object")
+    return coerceFromLooseObject(input as Record<string, any>);
   return undefined;
 }
 
@@ -115,25 +144,38 @@ export function toRows(
   }));
 }
 
-export function toRecord(scores: NormalizedCategoryScores): Record<CategoryKey, number> {
+export function toRecord(
+  scores: NormalizedCategoryScores,
+): Record<CategoryKey, number> {
   const s = ensureHarassmentAliases(scores);
-  return CATEGORY_KEYS.reduce((acc, k) => {
-    acc[k] = clamp03((s as any)[k]);
-    return acc;
-  }, {} as Record<CategoryKey, number>);
+  return CATEGORY_KEYS.reduce(
+    (acc, k) => {
+      acc[k] = clamp03((s as any)[k]);
+      return acc;
+    },
+    {} as Record<CategoryKey, number>,
+  );
 }
 
 export function toRadarData(
   scores: NormalizedCategoryScores,
   labels: Record<keyof NormalizedCategoryScores, string> = LABELS_BY_CATEGORY,
 ): Array<{ category: string; value: number; fullMark: number }> {
-  return toRows(scores, labels).map((r) => ({ category: r.label, value: r.value, fullMark: 3 }));
+  return toRows(scores, labels).map((r) => ({
+    category: r.label,
+    value: r.value,
+    fullMark: 3,
+  }));
 }
 
 export function pickTop(scores: NormalizedCategoryScores, n = 2) {
   const rows = toRows(scores);
   return rows
-    .sort((a, b) => (b.value !== a.value ? b.value - a.value : CATEGORY_KEYS.indexOf(a.key) - CATEGORY_KEYS.indexOf(b.key)))
+    .sort((a, b) =>
+      b.value !== a.value
+        ? b.value - a.value
+        : CATEGORY_KEYS.indexOf(a.key) - CATEGORY_KEYS.indexOf(b.key),
+    )
     .slice(0, Math.max(0, n))
     .map((r) => ({ key: r.key, value: r.value }));
 }
@@ -141,7 +183,11 @@ export function pickTop(scores: NormalizedCategoryScores, n = 2) {
 export function pickBottom(scores: NormalizedCategoryScores, n = 2) {
   const rows = toRows(scores);
   return rows
-    .sort((a, b) => (a.value !== b.value ? a.value - b.value : CATEGORY_KEYS.indexOf(a.key) - CATEGORY_KEYS.indexOf(b.key)))
+    .sort((a, b) =>
+      a.value !== b.value
+        ? a.value - b.value
+        : CATEGORY_KEYS.indexOf(a.key) - CATEGORY_KEYS.indexOf(b.key),
+    )
     .slice(0, Math.max(0, n))
     .map((r) => ({ key: r.key, value: r.value }));
 }
@@ -156,7 +202,12 @@ export function normalizeToCatArray(
   const s =
     coerceNormalized(input) ??
     ensureHarassmentAliases({
-      delegation: 0, orgDrag: 0, commGap: 0, updatePower: 0, genGap: 0, harassmentAwareness: 0,
+      delegation: 0,
+      orgDrag: 0,
+      commGap: 0,
+      updatePower: 0,
+      genGap: 0,
+      harassmentAwareness: 0,
     } as NormalizedCategoryScores);
   return toRows(s, labels);
 }
@@ -166,7 +217,12 @@ export function toRecordLoose(input: unknown): Record<CategoryKey, number> {
   const s =
     coerceNormalized(input) ??
     ensureHarassmentAliases({
-      delegation: 0, orgDrag: 0, commGap: 0, updatePower: 0, genGap: 0, harassmentAwareness: 0,
+      delegation: 0,
+      orgDrag: 0,
+      commGap: 0,
+      updatePower: 0,
+      genGap: 0,
+      harassmentAwareness: 0,
     } as NormalizedCategoryScores);
   return toRecord(s);
 }
@@ -175,16 +231,27 @@ export function toRecordLoose(input: unknown): Record<CategoryKey, number> {
 
 export function getEmojiLabel(k: CategoryKey): string {
   const emoji: Record<CategoryKey, string> = {
-    delegation: '🤝', orgDrag: '🧱', commGap: '🗣️', updatePower: '⚡', genGap: '👥', harassmentAwareness: '⚠️',
+    delegation: "🤝",
+    orgDrag: "🧱",
+    commGap: "🗣️",
+    updatePower: "⚡",
+    genGap: "👥",
+    harassmentAwareness: "⚠️",
   };
   return `${emoji[k]} ${LABELS_BY_CATEGORY[k]}`;
 }
 
 const SAMURAI_TYPES: SamuraiType[] = [
-  '真田幸村型','織田信長型','豊臣秀吉型','徳川家康型','上杉謙信型','斎藤道三型','今川義元型',
+  "真田幸村型",
+  "織田信長型",
+  "豊臣秀吉型",
+  "徳川家康型",
+  "上杉謙信型",
+  "斎藤道三型",
+  "今川義元型",
 ];
 function isSamuraiType(v: any): v is SamuraiType {
-  return typeof v === 'string' && (SAMURAI_TYPES as string[]).includes(v);
+  return typeof v === "string" && (SAMURAI_TYPES as string[]).includes(v);
 }
 
 /** SamuraiType を安全に解決（引数が無ければスコアから判定） */
@@ -193,7 +260,13 @@ export function resolveSamuraiType(
   scores?: NormalizedCategoryScores,
 ): SamuraiType | undefined {
   if (isSamuraiType(input)) return input;
-  if (scores) { try { return judgeSamurai(scores); } catch { /* noop */ } }
+  if (scores) {
+    try {
+      return judgeSamurai(scores);
+    } catch {
+      /* noop */
+    }
+  }
   return undefined;
 }
 

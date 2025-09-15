@@ -1,21 +1,21 @@
 // components/result/ResultPanel.tsx
-'use client';
+"use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import ShareModal from '@/components/common/ShareModal';
-import { Share2 } from 'lucide-react';
-import FinalizeOnMount from '@/components/result/FinalizeOnMount';
+import React, { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import ShareModal from "@/components/common/ShareModal";
+import { Share2 } from "lucide-react";
+import FinalizeOnMount from "@/components/result/FinalizeOnMount";
 import {
   normalizeToCatArray,
   resolveSamuraiType,
   getEmojiLabel,
   coerceNormalized,
-} from '@/lib/result/normalize';
-import { getSamuraiSlug } from '@/lib/samuraiTypeMap';
-import IdBadge from '@/components/result/IdBadge';
-import RidSync from '@/components/rid/RidSync';
-import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
+} from "@/lib/result/normalize";
+import { getSamuraiSlug } from "@/lib/samuraiTypeMap";
+import IdBadge from "@/components/result/IdBadge";
+import RidSync from "@/components/rid/RidSync";
+import type { NormalizedCategoryScores, SamuraiType } from "@/types/diagnosis";
 
 /* ========= ユーティリティ ========= */
 
@@ -23,24 +23,25 @@ import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
 function isIdish(v?: string | null) {
   if (!v) return false;
   const s = String(v).trim();
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;       // Crockford base32
-  const nano = /^[a-zA-Z0-9_-]{16,}$/;           // 16文字以上の英数-_ を許容
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/; // Crockford base32
+  const nano = /^[a-zA-Z0-9_-]{16,}$/; // 16文字以上の英数-_ を許容
   return uuid.test(s) || ulid.test(s) || nano.test(s);
 }
 
 // URL から rid を拾う（?rid= / ?resultId= / パス断片の両対応）
 function pickRidFromLocation(): string | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === "undefined") return null;
   try {
     const url = new URL(window.location.href);
-    for (const k of ['rid', 'resultId', 'resultid', 'id']) {
+    for (const k of ["rid", "resultId", "resultid", "id"]) {
       const v = url.searchParams.get(k);
       if (isIdish(v)) return String(v);
     }
-    const segs = url.pathname.split('/').filter(Boolean);
+    const segs = url.pathname.split("/").filter(Boolean);
     for (let i = segs.length - 1; i >= 0; i--) {
-      const p = decodeURIComponent(segs[i] || '');
+      const p = decodeURIComponent(segs[i] || "");
       if (isIdish(p)) return p;
     }
   } catch {}
@@ -80,7 +81,7 @@ export default function ResultPanel({
   const [ridResolved, setRidResolved] = useState<string>(() => {
     if (isIdish(rid)) return String(rid);
     const fromUrl = pickRidFromLocation();
-    return fromUrl ?? '';
+    return fromUrl ?? "";
   });
 
   useEffect(() => {
@@ -95,10 +96,10 @@ export default function ResultPanel({
     };
     tryUpdate();
     const t = setTimeout(tryUpdate, 300); // Finalize→URL反映の後追いを一回
-    window.addEventListener('popstate', tryUpdate);
+    window.addEventListener("popstate", tryUpdate);
     return () => {
       clearTimeout(t);
-      window.removeEventListener('popstate', tryUpdate);
+      window.removeEventListener("popstate", tryUpdate);
     };
   }, [rid]);
 
@@ -109,25 +110,28 @@ export default function ResultPanel({
 
   // 2) 表示用に「カテゴリ配列」へ整形
   //    ※ normalizeToCatArray は { key, label, value } を返す
-  const categoriesFixed = useMemo(() => normalizeToCatArray(safeScores), [safeScores]);
+  const categoriesFixed = useMemo(
+    () => normalizeToCatArray(safeScores),
+    [safeScores],
+  );
 
   // 3) 武将タイプの解決（文字列が無ければスコアから判定）
   const typeResolved: SamuraiType | undefined = useMemo(() => {
-    return resolveSamuraiType(samuraiType ?? '', safeScores);
+    return resolveSamuraiType(samuraiType ?? "", safeScores);
   }, [samuraiType, safeScores]);
 
-  const displayName = typeResolved || samuraiType || '武将';
+  const displayName = typeResolved || samuraiType || "武将";
 
   // Finalize 用の key/ja
   const finalizeKey = typeResolved ? getSamuraiSlug(typeResolved) : null;
-  const finalizeJa  = typeResolved ?? null;
+  const finalizeJa = typeResolved ?? null;
 
   const [shareOpen, setShareOpen] = useState(false);
   const hasRid = isIdish(ridResolved);
 
   // 画面タイトル（任意）
   useEffect(() => {
-    if (typeof document !== 'undefined') {
+    if (typeof document !== "undefined") {
       document.title = `診断結果：${displayName}`;
     }
   }, [displayName]);
@@ -144,7 +148,10 @@ export default function ResultPanel({
           rid={ridResolved}
           samuraiTypeKey={finalizeKey}
           samuraiTypeJa={finalizeJa}
-          categories={categoriesFixed.map((c) => ({ key: c.key, score: c.value }))}
+          categories={categoriesFixed.map((c) => ({
+            key: c.key,
+            score: c.value,
+          }))}
           /* ← DB の snake_case に合わせて入れる */
           scorePattern={scorePattern ?? null}
         />
@@ -189,19 +196,30 @@ export default function ResultPanel({
 
       {/* スコア一覧（value を使用） */}
       <div className="space-y-4 text-left">
-        <h3 className="text-xl font-semibold mb-4 text-center">カテゴリ別スコア（0〜3点）</h3>
+        <h3 className="text-xl font-semibold mb-4 text-center">
+          カテゴリ別スコア（0〜3点）
+        </h3>
         {categoriesFixed.map(({ key, label, value }) => {
           const emojiLabel = getEmojiLabel(key);
           const color =
-            value >= 2.5 ? 'text-green-600'
-            : value >= 2.0 ? 'text-yellow-600'
-            : 'text-red-600';
+            value >= 2.5
+              ? "text-green-600"
+              : value >= 2.0
+                ? "text-yellow-600"
+                : "text-red-600";
           return (
-            <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
+            <div
+              key={key}
+              className="flex justify-between items-center p-3 bg-gray-50 rounded"
+            >
               <span className="font-medium">{label}</span>
               <div className="flex items-center">
-                <span className={`text-lg font-bold ${color}`}>{Math.min(value, 3).toFixed(2)}点</span>
-                <span className="text-sm font-medium text-gray-800 ml-2">{emojiLabel}</span>
+                <span className={`text-lg font-bold ${color}`}>
+                  {Math.min(value, 3).toFixed(2)}点
+                </span>
+                <span className="text-sm font-medium text-gray-800 ml-2">
+                  {emojiLabel}
+                </span>
               </div>
             </div>
           );
@@ -210,11 +228,15 @@ export default function ResultPanel({
 
       {(comments.strengths.length > 0 || comments.tips.length > 0) && (
         <div className="mt-8 text-left max-w-3xl mx-auto">
-          <h3 className="text-lg font-semibold mb-2">🔍 あなたの特徴とヒント</h3>
+          <h3 className="text-lg font-semibold mb-2">
+            🔍 あなたの特徴とヒント
+          </h3>
 
           {comments.strengths.length > 0 && (
             <div className="mb-4">
-              <h4 className="font-semibold text-green-700 mb-1">あなたの強み</h4>
+              <h4 className="font-semibold text-green-700 mb-1">
+                あなたの強み
+              </h4>
               <ul className="list-disc list-inside text-green-800">
                 {comments.strengths.map((item, idx) => (
                   <li key={`strength-${idx}`}>{item}</li>
@@ -225,7 +247,9 @@ export default function ResultPanel({
 
           {comments.tips.length > 0 && (
             <div>
-              <h4 className="font-semibold text-orange-700 mb-1">改善のヒント</h4>
+              <h4 className="font-semibold text-orange-700 mb-1">
+                改善のヒント
+              </h4>
               <ul className="list-disc list-inside text-orange-800">
                 {comments.tips.map((item, idx) => (
                   <li key={`tip-${idx}`}>{item}</li>
@@ -246,7 +270,9 @@ export default function ResultPanel({
 
         <button
           onClick={() => {
-            const q = isIdish(ridResolved) ? `?rid=${encodeURIComponent(ridResolved)}` : '';
+            const q = isIdish(ridResolved)
+              ? `?rid=${encodeURIComponent(ridResolved)}`
+              : "";
             window.location.href = `/form${q}`;
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg hover:shadow-xl"
@@ -266,7 +292,9 @@ export default function ResultPanel({
           src="/images/logo.png"
           alt="企業の未来づくり研究所ロゴ"
           className="w-[40px] h-auto opacity-70 hover:opacity-90"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+          }}
         />
         <span>© 一般社団法人 企業の未来づくり研究所</span>
       </a>

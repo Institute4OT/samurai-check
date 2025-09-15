@@ -1,0 +1,8 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals"],
+  "rules": {
+    // ここに必要な個別ルールを追記（最低限の静かな設定にしてあります）
+    "@next/next/no-img-element": "off"
+  }
+}

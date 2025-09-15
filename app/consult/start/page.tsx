@@ -1,7 +1,7 @@
 // app/consult/start/page.tsx
-'use client';
+"use client";
 
-import ConsultStartForm from '@/components/consult/ConsultStartForm';
+import ConsultStartForm from "@/components/consult/ConsultStartForm";
 
 export default function ConsultStartPage() {
   return <ConsultStartForm />;
