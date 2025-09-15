@@ -20,7 +20,12 @@ import { supabase, type SamuraiResult } from '@/lib/supabase';
 import generateScoreComments from '@/lib/generateScoreComments';
 
 import { clamp03 } from '@/lib/scoreSnapshot';
-import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
+import type {
+  NormalizedCategoryScores,
+  SamuraiType,
+  ScorePattern,
+  QuestionId,
+} from '@/types/diagnosis';
 
 /* ================= ユーティリティ ================= */
 
@@ -30,7 +35,7 @@ function safeSet(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
 }
 
-// スコアマップ構築は内部で汎用マップ→最後に ScoreMap へキャスト（型安全より実行安定優先）
+// 型エラー回避：内部構築は汎用マップ→最後に ScoreMap へキャスト
 type AnyScoreMap = Record<string, Record<string, number>>;
 function buildScoreMap(questions: QuizQuestionType[]): ScoreMap {
   const map: AnyScoreMap = {};
@@ -47,6 +52,32 @@ function buildScoreMap(questions: QuizQuestionType[]): ScoreMap {
   return map as unknown as ScoreMap;
 }
 
+/** 回答配列 → “必ず Q1〜Q16 を含む” ScorePattern に変換（複数選択は最高スコアの選択肢を採用） */
+function buildFullScorePattern(
+  answers: { questionId: number; selectedAnswers: string[] }[],
+  scoreMap: ScoreMap
+): ScorePattern {
+  const anyMap = scoreMap as unknown as Record<string, Record<string, number>>;
+  // Q1..Q16 を空文字で初期化
+  const pattern = {} as ScorePattern;
+  for (let i = 1; i <= 16; i++) {
+    (pattern as any)[`Q${i}`] = '';
+  }
+  // 回答から埋める（ベストスコアの選択肢）
+  for (const a of answers) {
+    const qkey = `Q${a.questionId}` as QuestionId;
+    const m = anyMap[qkey] || {};
+    let chosen = a.selectedAnswers[0] ?? '';
+    let max = -1;
+    for (const txt of a.selectedAnswers) {
+      const s = Number(m[txt] ?? -1);
+      if (s > max) { max = s; chosen = txt; }
+    }
+    (pattern as any)[qkey] = String(chosen ?? '');
+  }
+  return pattern;
+}
+
 /* ======================= 画面本体 ======================= */
 
 export default function Home() {
@@ -60,7 +91,7 @@ export default function Home() {
   const [comments, setComments] = useState<{ strengths: string[]; tips: string[] }>({ strengths: [], tips: [] });
   const [rid, setRid] = useState<string | null>(null);
 
-  // ❶ 表示順（設問順はDISPLAY_ORDER、選択肢のみシャッフル）
+  // 設問順（選択肢のみシャッフル）
   const computedOrdered = useMemo<QuizQuestionType[]>(() => {
     const byId = new Map(quizQuestions.map((q) => [q.id, q]));
     return DISPLAY_ORDER
@@ -70,7 +101,7 @@ export default function Home() {
   }, []);
   useEffect(() => setOrderedQuestions(computedOrdered), [computedOrdered]);
 
-  // ❷ スコアマップ（採点テーブル）を一度だけ構築
+  // スコアマップ
   const scoreMap = useMemo<ScoreMap>(() => buildScoreMap(quizQuestions), []);
 
   const startQuiz = () => {
@@ -92,10 +123,8 @@ export default function Home() {
       const payload: Partial<SamuraiResult> & Record<string, any> = {
         id: generatedUserId,
         score_pattern: snapshot,         // 回答スナップショット（監査用）
-        samurai_type: typeDisplay ?? '', // 旧互換列（Finalizeで上書きされてもOK）
-        name: null,
-        email: null,
-        company_size: null,
+        samurai_type: typeDisplay ?? '', // 旧互換列（Finalizeで上書きでもOK）
+        name: null, email: null, company_size: null,
       };
 
       const { error } = await supabase.from('samurairesults').insert(payload).select();
@@ -120,7 +149,6 @@ export default function Home() {
     const q = orderedQuestions[pos - 1];
     if (!q) return;
 
-    // 未回答ガード（UIの disabled に加え二重防御）
     if (selected.length === 0) {
       alert('少なくとも1つは選んでください。');
       return;
@@ -130,7 +158,6 @@ export default function Home() {
     const updated = [...answers, newAnswer];
     setAnswers(updated);
 
-    // まだ続くなら次へ
     if (pos < orderedQuestions.length) {
       setStep(`q${pos + 1}` as `q${number}`);
       setSelected([]);
@@ -142,22 +169,16 @@ export default function Home() {
     // 1) 監査用スナップショット（Q→選択肢[]）
     const snapshot: Record<string, string[]> = {};
     updated.forEach((a) => (snapshot[`Q${a.questionId}`] = a.selectedAnswers));
-    safeSet('samurai-score-pattern', snapshot); // Finalize 用にも保存
+    safeSet('samurai-score-pattern', snapshot); // Finalize用にも保存
 
-    // 2) “全Qを埋めた” completedAnswers を作る（未回答は []）
-    const allIds = quizQuestions.map((qq) => qq.id);
-    const byId = new Map(updated.map((a) => [a.questionId, a.selectedAnswers]));
-    const completedAnswers = allIds.map((id) => ({
-      questionId: id,
-      selectedAnswers: byId.get(id) ?? [],
-    }));
+    // 2) 回答配列 → ScorePattern を作成（Q1〜Q16を完全に埋める）
+    const pattern: ScorePattern = buildFullScorePattern(updated, scoreMap);
 
-    // 3) スコア計算（scoring 実装は answers配列に対して forEach を使うため配列を渡す）
-    const result = calculateCategoryScores(
-      completedAnswers as unknown as any, // ← ランタイム実装優先（forEach）。型は any で吸収。
-      scoreMap,
-      { normalizeMode: 'auto', maxPerQuestion: 3 }
-    );
+    // 3) スコア計算（ScorePattern を渡す：scoringSystem.ts と一致）
+    const result = calculateCategoryScores(pattern, scoreMap, {
+      normalizeMode: 'auto',
+      maxPerQuestion: 3,
+    });
 
     // 4) 正規化 0〜3 & タイプ判定
     const normalized = result.normalized as NormalizedCategoryScores;
@@ -197,10 +218,7 @@ export default function Home() {
     if (pos <= 1) return;
     const prevQ = orderedQuestions[pos - 2];
     setStep(`q${pos - 1}` as `q${number}`);
-    if (!prevQ) {
-      setSelected([]);
-      return;
-    }
+    if (!prevQ) { setSelected([]); return; }
     const prevStored = answers.find((a) => a.questionId === prevQ.id);
     setSelected(prevStored ? [...prevStored.selectedAnswers] : []);
     setAnswers(answers.filter((a) => a.questionId !== prevQ.id));
