@@ -21,17 +21,9 @@ const Rid = z.string().uuid();
 
 /** 受け取ったオブジェクトを「必ず Q1〜Q16 を持つ ScorePattern(= string)」に整形 */
 function coerceScorePattern(v: unknown): ScorePattern {
-  const src = (
-    v && typeof v === "object" ? (v as Record<string, unknown>) : {}
-  ) as Record<string, unknown>;
-
-  const qs: QuestionId[] = [
-    "Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8",
-    "Q9","Q10","Q11","Q12","Q13","Q14","Q15","Q16",
-  ];
-
+  const src = (v && typeof v === "object" ? (v as Record<string, unknown>) : {}) as Record<string, unknown>;
+  const qs: QuestionId[] = ["Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8","Q9","Q10","Q11","Q12","Q13","Q14","Q15","Q16"];
   const out: Record<QuestionId, string> = {} as any;
-
   for (const q of qs) {
     const raw = src[q];
     let text = "";
@@ -47,8 +39,26 @@ function coerceScorePattern(v: unknown): ScorePattern {
     }
     out[q] = text;
   }
-
   return out as ScorePattern;
+}
+
+/** DB行をレポート用の共通形に正規化 */
+function normalizeRow(row: any): {
+  id: string;
+  company_size?: string | null;
+  normalized_scores?: Record<string, unknown> | null;
+  samurai_type?: string | null;
+  score_pattern?: unknown;
+} {
+  if (!row) return { id: "", company_size: null, normalized_scores: null, samurai_type: null, score_pattern: null };
+  return {
+    id: row.id,
+    company_size: row.company_size ?? row.size ?? null,
+    // scores/normalized_scores のどちらでも受け取り、日本語キーも吸収
+    normalized_scores: row.normalized_scores ?? row.scores ?? null,
+    samurai_type: row.samurai_type ?? row.type ?? null,
+    score_pattern: row.score_pattern ?? row.pattern ?? row.answer_snapshot ?? null,
+  };
 }
 
 type PageProps = { params: { rid: string } };
@@ -62,12 +72,25 @@ export default async function ReportPage({ params }: PageProps) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
 
-  const { data, error } = await supabase
+  // 1) まず diagnoses を見る
+  let { data, error } = await supabase
     .from("diagnoses")
     .select("id, company_size, normalized_scores, samurai_type, score_pattern")
     .eq("id", rid.data)
     .limit(1)
     .maybeSingle();
+
+  // 2) 無ければ samurairesults を見る（新フォーマット対応）
+  if (error || !data) {
+    const fallback = await supabase
+      .from("samurairesults")
+      .select("id, company_size, size, normalized_scores, scores, samurai_type, type, score_pattern, pattern, answer_snapshot")
+      .eq("id", rid.data)
+      .limit(1)
+      .maybeSingle();
+    data = fallback.data as any;
+    error = fallback.error as any;
+  }
 
   // 行が無い / 取得エラー → 404にせず結果画面へ退避（UX優先）
   if (error || !data) {
@@ -85,7 +108,8 @@ export default async function ReportPage({ params }: PageProps) {
     harassmentAwareness: z.coerce.number(),
   });
 
-  const rawScores = (data.normalized_scores ?? {}) as Record<string, unknown>;
+  const norm = normalizeRow(data);
+  const rawScores = (norm.normalized_scores ?? {}) as Record<string, unknown>;
   const normalizedScoresObj = ensureHarassmentAliases(rawScores);
   const ok = ScoresSchema.safeParse(normalizedScoresObj).success;
   if (!ok) {
@@ -96,8 +120,8 @@ export default async function ReportPage({ params }: PageProps) {
 
   // samurai_type 無しならスコアから判定
   let samuraiType: SamuraiType | undefined =
-    typeof data.samurai_type === "string" && data.samurai_type
-      ? (data.samurai_type as SamuraiType)
+    typeof norm.samurai_type === "string" && norm.samurai_type
+      ? (norm.samurai_type as SamuraiType)
       : undefined;
   if (!samuraiType) samuraiType = judgeSamurai(scores);
 
@@ -106,7 +130,7 @@ export default async function ReportPage({ params }: PageProps) {
 
   // 個別コメント：scorePattern は必須キーを補完し、string に正規化
   const personal = getPersonalizedComments({
-    scorePattern: coerceScorePattern(data.score_pattern),
+    scorePattern: coerceScorePattern(norm.score_pattern),
     normalizedScores: scores,
     maxItems: 2,
   });
@@ -119,10 +143,10 @@ export default async function ReportPage({ params }: PageProps) {
   return (
     <main className="container py-6">
       <ReportTemplate
-        diagId={data.id}
+        diagId={norm.id}
         samuraiType={samuraiType}
         normalizedScores={scores}
-        companySize={(data.company_size as string | undefined) ?? "unknown"}
+        companySize={(norm.company_size as string | undefined) ?? "unknown"}
         content={content}
         personal={personal}
         openChat={openChat}
