@@ -1,15 +1,17 @@
-// /app/report/page.tsx
+// app/report/page.tsx
 import { notFound } from 'next/navigation';
 import ReportTemplate from '@/components/report/ReportTemplate';
 import type { NormalizedCategoryScores, SamuraiType } from '@/types/diagnosis';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import { TYPE_CONTENTS } from '@/lib/report/typeContents'; // 型別テキスト集（既存）
-import { judgeSamurai } from '@/lib/samuraiJudge';         // samurai_type欠損時の保険
+import { TYPE_CONTENTS } from '@/lib/report/typeContents';
+import { judgeSamurai } from '@/lib/samuraiJudge';
+import { ensureHarassmentAliases } from '@/lib/harassmentKey';
 
 export const revalidate = 0;
 
-// --- 型＆バリデーション ---
+/* ===================== 型 & バリデーション ===================== */
+
 const SamuraiTypeEnum = z.enum([
   '真田幸村型',
   '今川義元型',
@@ -20,6 +22,7 @@ const SamuraiTypeEnum = z.enum([
   '上杉謙信型',
 ]);
 
+// harassmentRisk は互換用で optional（来ても受け入れる）
 const ScoresSchema = z.object({
   delegation: z.number().min(0).max(3),
   orgDrag: z.number().min(0).max(3),
@@ -27,7 +30,8 @@ const ScoresSchema = z.object({
   updatePower: z.number().min(0).max(3),
   genGap: z.number().min(0).max(3),
   harassmentAwareness: z.number().min(0).max(3),
-}) satisfies z.ZodType<NormalizedCategoryScores>;
+  harassmentRisk: z.number().min(0).max(3).optional(),
+}) as z.ZodType<NormalizedCategoryScores>;
 
 const ParamsSchema = z.object({
   id: z.string().uuid().optional(),
@@ -39,24 +43,27 @@ type PageProps = {
   searchParams?: Record<string, string | string[] | undefined>;
 };
 
-// --- ユーティリティ ---
-function parseScoresJson(json?: string): NormalizedCategoryScores | undefined {
-  if (!json) return undefined;
+/* ===================== ユーティリティ ===================== */
+
+function parseScoresFromParam(raw?: string | null): NormalizedCategoryScores | undefined {
+  if (!raw) return undefined;
   try {
-    const raw = JSON.parse(json);
-    const parsed = ScoresSchema.parse(raw);
-    return parsed;
+    const obj = JSON.parse(raw);
+    return ScoresSchema.parse(obj);
   } catch {
     return undefined;
   }
 }
 
-async function fetchFromSupabase(id: string) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  if (!supabaseUrl || !anonKey) {
-    return { id: undefined as string | undefined, company_size: undefined as string | undefined, type: undefined as SamuraiType | undefined, scores: undefined as NormalizedCategoryScores | undefined };
-  }
+async function fetchFromSupabase(id: string): Promise<{
+  id?: string;
+  company_size?: string;
+  type?: SamuraiType;
+  scores?: NormalizedCategoryScores;
+}> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return {};
 
   const supabase = createClient(supabaseUrl, anonKey);
   const { data, error } = await supabase
@@ -66,9 +73,7 @@ async function fetchFromSupabase(id: string) {
     .limit(1)
     .maybeSingle();
 
-  if (error || !data) {
-    return { id: undefined, company_size: undefined, type: undefined, scores: undefined };
-  }
+  if (error || !data) return {};
 
   const type = SamuraiTypeEnum.safeParse(data.samurai_type).success
     ? (data.samurai_type as SamuraiType)
@@ -84,9 +89,10 @@ async function fetchFromSupabase(id: string) {
   return { id: data.id as string, company_size: (data.company_size as string | undefined) ?? 'unknown', type, scores };
 }
 
-// --- ページ本体 ---
+/* ===================== ページ本体 ===================== */
+
 export default async function ReportPage({ searchParams }: PageProps) {
-  // 1) クエリの正規化
+  // 1) クエリ正規化
   const params = ParamsSchema.safeParse(
     Object.fromEntries(
       Object.entries(searchParams ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
@@ -101,28 +107,39 @@ export default async function ReportPage({ searchParams }: PageProps) {
 
   // 2) DB優先で取得
   if (params.data.id) {
-    const { id, company_size, type, scores } = await fetchFromSupabase(params.data.id);
-    diagId = id ?? diagId;
-    companySize = company_size ?? companySize;
-    samuraiType = type ?? samuraiType;
-    normalizedScores = scores ?? normalizedScores;
+    const fetched = await fetchFromSupabase(params.data.id);
+    diagId = fetched.id ?? diagId;
+    companySize = fetched.company_size ?? companySize;
+    samuraiType = fetched.type ?? samuraiType;
+    normalizedScores = fetched.scores ?? normalizedScores;
   }
 
-  // 3) フォールバック（クエリ直指定）
-  if (!samuraiType && params.data.samuraiType) samuraiType = params.data.samuraiType;
-  if (!normalizedScores && params.data.scores) normalizedScores = parseScoresJson(params.data.scores);
+  // 3) URLパラメータの scores をフォールバックで採用
+  if (!normalizedScores && params.data.scores) {
+    normalizedScores = parseScoresFromParam(params.data.scores) ?? normalizedScores;
+  }
 
-  // samurai_type が無い場合はスコアから判定
-  if (!samuraiType && normalizedScores) samuraiType = judgeSamurai(normalizedScores);
+  // 4) ここまででスコアが無ければ404
+  if (!normalizedScores) return notFound();
 
-  // 4) 最終チェック
-  if (!samuraiType || !normalizedScores) return notFound();
+  // 5) 互換キーを補正（両キーをそろえる）
+  normalizedScores = ensureHarassmentAliases(normalizedScores);
 
-  // 型別本文（既存 typeContents を使用・文言改変なし）
+  // 6) タイプ判定（欠損時のみ）
+  if (!samuraiType) {
+    try {
+      samuraiType = judgeSamurai(normalizedScores);
+    } catch {
+      samuraiType = undefined;
+    }
+  }
+  if (!samuraiType) return notFound();
+
+  // 7) 型別本文（既存 typeContents を利用）
   const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[samuraiType];
   if (!content) return notFound();
 
-  // 5) レンダリング（ReportTemplate の“フル装備版” Props をすべて供給）
+  // 8) レンダリング
   return (
     <main className="container py-6">
       <ReportTemplate
@@ -131,7 +148,6 @@ export default async function ReportPage({ searchParams }: PageProps) {
         normalizedScores={normalizedScores}
         companySize={companySize ?? 'unknown'}
         content={content}
-        // personalization は [rid] 版で注入しているのでここでは省略可（ReportBody 側でフォールバック動作）
         openChat={{
           qrSrc: process.env.NEXT_PUBLIC_OPENCHAT_QR ?? undefined,
           linkHref: process.env.NEXT_PUBLIC_OPENCHAT_URL ?? undefined,

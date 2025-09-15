@@ -34,14 +34,15 @@ const POSITIVE_KEYS: Array<keyof NormalizedCategoryScores> = ['updatePower', 'de
 const RISK_KEYS: Array<keyof NormalizedCategoryScores> = ['orgDrag', 'commGap', 'genGap', 'harassmentAwareness'];
 
 // スコアしきい値（経験則）
-const GIFT_MIN_SCORE_PER_Q = 2;   // 質問スコアがこれ以上なら「良い回答」と見做す
-const RISK_MAX_SCORE_PER_Q = 0;   // 質問スコアがこれ以下なら「要改善」と見做す
-const LOW_POSITIVE_THRESHOLD = 1.2; // 正規化スコアがこの値未満なら強化余地
-const HIGH_RISK_THRESHOLD = 1.8;    // 正規化スコアがこの値を超えるとリスク寄り
+const GIFT_MIN_SCORE_PER_Q = 2;      // 質問スコアがこれ以上なら「良い回答」と見做す
+const RISK_MAX_SCORE_PER_Q = 0;      // 質問スコアがこれ以下なら「要改善」と見做す
+const LOW_POSITIVE_THRESHOLD = 1.2;  // 正規化スコアがこの値未満なら強化余地
+const HIGH_RISK_THRESHOLD = 1.8;     // 正規化スコアがこの値を超えるとリスク寄り
 
 function clamp03(v: number) { return Math.max(0, Math.min(3, Number.isFinite(v) ? v : 0)); }
 
 // 見出し用ラベル（デフォルト）
+// ※ keyof NormalizedCategoryScores を満たすため、互換キー harassmentRisk も“必ず”定義
 const DEFAULT_LABELS: Record<keyof NormalizedCategoryScores, string> = {
   delegation: '権限委譲・構造健全度',
   orgDrag: '組織進化阻害',
@@ -49,6 +50,7 @@ const DEFAULT_LABELS: Record<keyof NormalizedCategoryScores, string> = {
   updatePower: 'アップデート力',
   genGap: 'ジェネギャップ感覚',
   harassmentAwareness: '無自覚ハラ傾向',
+  harassmentRisk: '無自覚ハラ傾向',
 };
 
 /** 回答ベースのQスコア配列を作る（scoreMapが無い場合は0で埋める） */
