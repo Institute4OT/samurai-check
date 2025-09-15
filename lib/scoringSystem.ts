@@ -286,7 +286,7 @@ export function debugScoreCalculation(
       // @ts-ignore
       const cs = calculateCategoryScores(
         pattern,
-        /* scoreMap */ undefined,
+         {} as ScoreMap,  
         options,
       ) as any;
       const total = Object.values(cs || {}).reduce(

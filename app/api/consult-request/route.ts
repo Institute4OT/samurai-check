@@ -1,39 +1,21 @@
-// /app/api/consult-request/route.ts
+// app/api/consult-request/route.ts
 // 相談受付 → ユーザー通知／社内通知／ご案内メール送信
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { sendMail } from "@/lib/mail"; // ← 統一ポイント：ブリッジ経由で新 mailer を使う
-
+import { sendMail } from "@/lib/mail";
 import {
-  buildConsultEmail,
   renderConsultIntakeMailToUser,
   renderConsultIntakeMailToOps,
+  buildConsultEmail,
 } from "@/lib/emailTemplates";
 
-// Next.js ルート設定
+// Next.js app router が許可しているメタ export
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const preferredRegion = "hnd1"; // Tokyo（お好みで）
+export const preferredRegion = "hnd1"; // 任意（Tokyo）
 
-// 入力ペイロード
-const Payload = z.object({
-  email: z.string().email(),
-  name: z.string().min(1).optional(),
-  company: z.string().optional(),
-  note: z.string().optional(),
-  rid: z.string().optional(), // ← 任意（計測や関連付けに使う）
-  dry: z.boolean().optional(), // dry-run したい時は true
-});
-
-type Consultant = {
-  name?: string;
-  email: string;
-  company?: string;
-  note?: string;
-};
-
-// 計測用の UTM を付与（rid は utm_id に）
+// UTM を付与（rid は utm_id として付与）
 function addUtm(url: string, content: string, rid?: string) {
   try {
     const u = new URL(url);
@@ -50,51 +32,63 @@ function addUtm(url: string, content: string, rid?: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    // JSON 取得とバリデーション
-    const json = await req.json().catch(() => null);
-    if (!json) {
-      return NextResponse.json(
-        { ok: false, error: "invalid json" },
-        { status: 400 },
-      );
+    // 入力の取得＆バリデーション
+    const raw = await req.json().catch(() => null);
+    if (!raw) {
+      return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
     }
-    const parsed = Payload.safeParse(json);
+
+    const Schema = z.object({
+      email: z.string().email(),
+      name: z.string().trim().optional(),
+      company: z.string().trim().optional(),
+      note: z.string().optional(),
+      rid: z.string().optional(),
+      dry: z.boolean().optional(),
+    });
+
+    const parsed = Schema.safeParse(raw);
     if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: parsed.error.flatten() },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
 
     const { email, name, company, note, rid, dry } = parsed.data;
-    const input: Consultant = { email, name, company, note };
 
-    // 相談導線（テンプレが対応していれば使われる想定）
-    const bookingBase =
-      process.env.NEXT_PUBLIC_BOOKING_URL?.trim() ||
-      `${process.env.NEXT_PUBLIC_APP_URL?.trim() || ""}/consult`;
-    const consultLink = bookingBase
+    // 予約導線（なければ /consult をフォールバック）
+    const base =
+      (process.env.NEXT_PUBLIC_BOOKING_URL || "").trim() ||
+      `${(process.env.NEXT_PUBLIC_APP_URL || "").trim()}/consult`;
+
+    const consultLink = base
       ? addUtm(
-          rid
-            ? `${bookingBase}${bookingBase.includes("?") ? "&" : "?"}rid=${encodeURIComponent(rid)}`
-            : bookingBase,
+          rid ? `${base}${base.includes("?") ? "&" : "?"}rid=${encodeURIComponent(rid)}` : base,
           "cta_consult",
-          rid,
+          rid
         )
       : "";
 
-    // メール内容を生成
-    const userMail = renderConsultIntakeMailToUser(input); // 相談受付（ユーザー向け）
-    const opsMail = renderConsultIntakeMailToOps(input); // 相談受付（社内向け）
-    // ご案内メール：テンプレ側が consultLink を受けられる場合に備え同梱（型は any で吸収）
-    const guideMail = buildConsultEmail({
-      ...(input as any),
+    // テンプレに渡す引数（型は libs の変更に左右されないよう any で吸収）
+    const args = {
+      toEmail: email,
+      toName: name ?? "",
+      company,
+      note,
+      rid,
       consultLink,
-    } as any);
+    };
 
-    // dry-run の時は送信スキップ
+    // 受付メール（ユーザー／運営）
+    const userMail = renderConsultIntakeMailToUser(args as any) as any;
+    const opsMail = renderConsultIntakeMailToOps(args as any) as any;
+
+    // ご案内メール（buildConsultEmail は { user, ops } を返す）
+    const guide = buildConsultEmail(args as any) as any;
+    const guideUser = (guide?.user ?? {}) as { subject?: string; html?: string; text?: string };
+
+    // dry-run でなければ送信
     if (!dry) {
       await Promise.all([
+        // ユーザー：受付通知
         sendMail({
           to: email,
           subject: userMail.subject,
@@ -103,18 +97,20 @@ export async function POST(req: NextRequest) {
           replyTo: process.env.MAIL_REPLY_TO || undefined,
           tagId: `consult:intake_user${rid ? `:${rid}` : ""}`,
         }),
+        // 運営：受付通知
         sendMail({
-          to: process.env.MAIL_TO_OPS || process.env.MAIL_TO_TEST || email, // フォールバック
+          to: process.env.MAIL_TO_OPS || process.env.MAIL_TO_TEST || email,
           subject: opsMail.subject,
           html: opsMail.html,
           text: opsMail.text,
           tagId: `consult:intake_ops${rid ? `:${rid}` : ""}`,
         }),
+        // ユーザー：ご案内（予約導線付き）
         sendMail({
           to: email,
-          subject: guideMail.subject,
-          html: guideMail.html,
-          text: guideMail.text,
+          subject: guideUser.subject || userMail.subject,
+          html: guideUser.html || userMail.html,
+          text: guideUser.text || userMail.text,
           replyTo: process.env.MAIL_REPLY_TO || undefined,
           tagId: `consult:guide${rid ? `:${rid}` : ""}`,
         }),
@@ -126,7 +122,7 @@ export async function POST(req: NextRequest) {
     console.error("[api/consult-request] error:", e);
     return NextResponse.json(
       { ok: false, error: e?.message ?? String(e) },
-      { status: 400 },
+      { status: 400 }
     );
   }
 }
