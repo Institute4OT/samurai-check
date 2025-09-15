@@ -13,7 +13,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const preferredRegion = "hnd1";
 
-// --- utils ---
 function ensureSama(name?: string | null) {
   const n = (name ?? "").trim();
   if (!n) return "ご担当者様";
@@ -47,7 +46,6 @@ function bucket(size?: string | null) {
   return "small";
 }
 
-// --- consultant routing ---
 type Topic =
   | "meeting"
   | "delegation"
@@ -90,7 +88,7 @@ export async function POST(req: NextRequest) {
       company: z.string().trim().optional(),
       note: z.string().optional(),
       rid: z.string().optional(),
-      topics: z.array(z.string()).optional(), // Topic[]
+      topics: z.array(z.string()).optional(),
       style: z.enum(["deep", "speed"]).optional(),
       companySize: z.string().optional(),
       dry: z.boolean().optional(),
@@ -102,7 +100,7 @@ export async function POST(req: NextRequest) {
 
     const { email, name, company, note, rid, topics, style, companySize, dry } = parsed.data;
 
-    // 50名以下ガード（rid→supabase 参照できる場合のみ）
+    // 50名以下のブロック（rid から参照できる場合のみ）
     try {
       const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -124,30 +122,33 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch {
-      // 失敗してもブロックはせず続行（運用優先）
+      // 参照できない場合は運用優先で通す
     }
 
     // 担当振り分け
     const assignee = decideAssignee((topics as Topic[]) || [], style as Style | undefined);
 
-    // 予約（Spir）URL
+    // ===== 予約URLのフォールバック順を明示 =====
     const spirBase =
       assignee === "morigami"
         ? (process.env.SPIR_MORIGAMI_URL || process.env.NEXT_PUBLIC_SPIR_MORIGAMI_URL || "").trim()
         : (process.env.SPIR_ISHIJIMA_URL || process.env.NEXT_PUBLIC_SPIR_ISHIJIMA_URL || "").trim();
+    const bookingBase = (process.env.NEXT_PUBLIC_BOOKING_URL || "").trim();
+    const appBase = (process.env.NEXT_PUBLIC_APP_URL || "").trim();
 
-    const consultLink = spirBase
-      ? addUtm(
-          rid
-            ? `${spirBase}${spirBase.includes("?") ? "&" : "?"}rid=${encodeURIComponent(rid)}`
-            : spirBase,
-          "cta_consult",
-          rid,
-          email,
-        )
-      : addUtm(`${process.env.NEXT_PUBLIC_APP_URL || ""}/consult`, "cta_consult", rid, email);
+    const base =
+      spirBase ||
+      bookingBase || // ← ここを新規追加
+      (appBase ? `${appBase}/consult` : "/consult");
 
-    // テンプレに渡す共通引数
+    const consultLink = addUtm(
+      rid ? `${base}${base.includes("?") ? "&" : "?"}rid=${encodeURIComponent(rid)}` : base,
+      "cta_consult",
+      rid,
+      email,
+    );
+    // =========================================
+
     const args = {
       toEmail: email,
       toName: ensureSama(name),
@@ -155,13 +156,11 @@ export async function POST(req: NextRequest) {
       note,
       rid,
       consultLink,
-      assignee, // for ops template
+      assignee,
     };
 
     const userMail = renderConsultIntakeMailToUser(args as any) as any;
     const opsMail = renderConsultIntakeMailToOps(args as any) as any;
-
-    // ご案内メール（予約導線付き）
     const guide = buildConsultEmail(args as any) as any;
     const guideUser = (guide?.user ?? {}) as { subject?: string; html?: string; text?: string };
 

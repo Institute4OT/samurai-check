@@ -36,11 +36,11 @@ const industries = [
   "その他",
 ] as const;
 const ageBands = [
-  "～29歳",
-  "30～39歳",
+  "～39歳",
   "40～49歳",
   "50～59歳",
-  "60歳以上",
+  "60～69歳",
+  "70歳以上",
 ] as const;
 
 export default function ReportRequestFormPage() {

@@ -1,26 +1,18 @@
 // app/consult/booking/route.ts
+/* eslint-disable no-console */
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendMail } from "@/lib/mail";
 import {
   renderConsultIntakeMailToUser,
   renderConsultIntakeMailToOps,
-  // bookingUrlFor は使わずローカル生成に切替（型衝突を避ける）
 } from "@/lib/emailTemplates";
-
-// env の存在チェック（ローカル関数）
-function needEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`[consult/booking] missing env: ${name}`);
-  return v;
-}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const preferredRegion = ["hnd1"]; // Tokyo(羽田)
 
 // ===== Types =====
-// ※ emailTemplates 側の Consultant と衝突しない自前のキー型
 type ConsultantKey = "ishijima" | "morigami" | "either";
 
 type TopicKey =
@@ -35,133 +27,124 @@ type TopicKey =
   | "vision" // 理念・ビジョン
   | "other"; // 自由記入
 
-// ===== 自動割当（either のときだけ使用） =====
+type StylePref = "deep" | "speed" | "" | null | undefined;
+
+// ===== Auto-assign rules =====
 const ISHI_SET = new Set<TopicKey>([
   "meeting",
-  "relations",
-  "brain",
   "delegation",
   "execCoaching",
+  "brain",
+  "vision",
+  "relations", // 関係性の是正をスピードで切る場合も
 ]);
-const MORI_SET = new Set<TopicKey>(["engagement", "career", "culture"]);
-// vision は中立（どちらでも可）
+const MORI_SET = new Set<TopicKey>(["engagement", "career", "culture", "relations"]);
 
-function autoAssign(themes: string[]): ConsultantKey {
+function decideAssignee(themes: string[], style?: StylePref): ConsultantKey {
   const picked = Array.from(
-    new Set(
-      (themes || []).map((s) => String(s).trim()).filter(Boolean) as TopicKey[],
-    ),
+    new Set((themes || []).map((s) => String(s).trim()).filter(Boolean) as TopicKey[]),
   );
-  if (picked.some((k) => MORI_SET.has(k))) return "morigami";
-  if (picked.some((k) => ISHI_SET.has(k))) return "ishijima";
-  return "ishijima"; // デフォルト
+  const ish = picked.some((k) => ISHI_SET.has(k));
+  const mor = picked.some((k) => MORI_SET.has(k));
+  if (ish && !mor) return "ishijima";
+  if (!ish && mor) return "morigami";
+  if (ish && mor) {
+    if (style === "speed") return "ishijima";
+    if (style === "deep") return "morigami";
+  }
+  return "ishijima";
 }
 
-/** 予約URL（rid/email クエリ付与）をローカルで生成 */
-function makeBookingUrl(req: Request, rid?: string | null, email?: string) {
+// ===== Helpers =====
+function spirUrlFor(key: ConsultantKey): string {
+  const ish = (process.env.SPIR_ISHIJIMA_URL || process.env.NEXT_PUBLIC_SPIR_ISHIJIMA_URL || "").trim();
+  const mor = (process.env.SPIR_MORIGAMI_URL || process.env.NEXT_PUBLIC_SPIR_MORIGAMI_URL || "").trim();
+  if (key === "morigami" && mor) return mor;
+  if (key === "ishijima" && ish) return ish;
+  return "";
+}
+
+/** 担当別の予約URL（SPIR最優先 → NEXT_PUBLIC_BOOKING_URL → /consult） */
+function makeConsultLink(req: Request, assigned: ConsultantKey, rid?: string | null, email?: string | null) {
   const url = new URL(req.url);
   const origin = `${url.protocol}//${url.host}`;
-  const base = (
-    process.env.NEXT_PUBLIC_BOOKING_BASE_URL || `${origin}/consult`
-  ).trim();
-  const qs = new URLSearchParams();
-  if (rid) qs.set("rid", rid);
-  if (email) qs.set("email", email);
-  return qs.toString() ? `${base}?${qs.toString()}` : base;
+  const spir = spirUrlFor(assigned);
+  const base =
+    spir ||
+    (process.env.NEXT_PUBLIC_BOOKING_URL || "").trim() ||
+    `${origin}/consult`;
+
+  try {
+    const u = new URL(base, origin);
+    if (rid) u.searchParams.set("rid", rid);
+    if (email) u.searchParams.set("email", email);
+    if (!u.searchParams.get("utm_source")) u.searchParams.set("utm_source", "email");
+    if (!u.searchParams.get("utm_medium")) u.searchParams.set("utm_medium", "transactional");
+    if (!u.searchParams.get("utm_campaign")) u.searchParams.set("utm_campaign", "consult_intake");
+    if (!u.searchParams.get("utm_content")) u.searchParams.set("utm_content", "cta_consult");
+    return u.toString();
+  } catch {
+    // base が相対などで URL 失敗した場合は最後に /consult を返す
+    const fallback = new URL(`${origin}/consult`);
+    if (rid) fallback.searchParams.set("rid", rid);
+    if (email) fallback.searchParams.set("email", email || "");
+    return fallback.toString();
+  }
 }
 
-/* ===========================================================
-   受信ボディの読取を JSON / x-www-form-urlencoded / multipart
-   の三態で吸収するヘルパー
-   =========================================================== */
+/** 三態対応読取（multipart / x-www-form-urlencoded / json） */
 async function readBookingRequest(req: Request) {
   const ct = (req.headers.get("content-type") || "").toLowerCase();
-  const normalizeThemes = (xs: unknown) =>
-    (Array.isArray(xs) ? xs : xs ? [xs] : [])
-      .map((x) => String(x).trim())
-      .filter(Boolean);
 
-  // 1) multipart / x-www-form-urlencoded（formData が無い環境もある）
-  if (
-    ct.includes("multipart/form-data") ||
-    ct.includes("application/x-www-form-urlencoded")
-  ) {
+  // multipart / urlencoded
+  if (ct.includes("multipart/form-data") || ct.includes("application/x-www-form-urlencoded")) {
     if (typeof (req as any).formData === "function") {
-      // ★ fd を FormData で型付け
       const fd: FormData = await (req as any).formData();
+      const themes = (fd.getAll("themes") as FormDataEntryValue[])
+        .map((v) => (typeof v === "string" ? v.trim() : v.name))
+        .filter(Boolean);
       return {
         name: String(fd.get("name") ?? "").trim(),
         email: String(fd.get("email") ?? "").trim(),
-        rid: String(
-          fd.get("rid") ?? fd.get("resultId") ?? fd.get("id") ?? "",
-        ).trim(),
-        assigneePref: (String(fd.get("assigneePref") ?? "either").trim() ||
-          "either") as ConsultantKey,
-        // ★ v: FormDataEntryValue を明示（string or File）
-        themes: (fd.getAll("themes") as FormDataEntryValue[])
-          .map((v: FormDataEntryValue) =>
-            typeof v === "string" ? v.trim() : v.name,
-          )
-          .filter(Boolean),
+        rid: String(fd.get("rid") ?? fd.get("resultId") ?? fd.get("id") ?? "").trim(),
+        assigneePref: (String(fd.get("assigneePref") ?? "either").trim() || "either") as ConsultantKey,
+        themes,
         note: (String(fd.get("note") ?? "").trim() || null) as string | null,
-        companyName: (String(fd.get("companyName") ?? "").trim() || null) as
-          | string
-          | null,
-        companySize: (String(fd.get("companySize") ?? "").trim() || null) as
-          | string
-          | null,
-        industry: (String(fd.get("industry") ?? "").trim() || null) as
-          | string
-          | null,
-        ageRange: (String(fd.get("ageRange") ?? "").trim() || null) as
-          | string
-          | null,
-        style: (String(fd.get("style") ?? "").trim() || null) as string | null,
+        companyName: (String(fd.get("companyName") ?? "").trim() || null) as string | null,
+        companySize: (String(fd.get("companySize") ?? "").trim() || null) as string | null,
+        industry: (String(fd.get("industry") ?? "").trim() || null) as string | null,
+        ageRange: (String(fd.get("ageRange") ?? "").trim() || null) as string | null,
+        style: (String(fd.get("style") ?? "").trim() || null) as StylePref,
       };
     } else {
-      //  …（urlencoded フォールバックはそのままでOK）
       const text = await req.text();
       const p = new URLSearchParams(text);
       return {
         name: String(p.get("name") ?? "").trim(),
         email: String(p.get("email") ?? "").trim(),
-        rid: String(
-          p.get("rid") ?? p.get("resultId") ?? p.get("id") ?? "",
-        ).trim(),
-        assigneePref: (String(p.get("assigneePref") ?? "either").trim() ||
-          "either") as ConsultantKey,
-        themes: p
-          .getAll("themes")
-          .map((s) => String(s).trim())
-          .filter(Boolean),
+        rid: String(p.get("rid") ?? p.get("resultId") ?? p.get("id") ?? "").trim(),
+        assigneePref: (String(p.get("assigneePref") ?? "either").trim() || "either") as ConsultantKey,
+        themes: p.getAll("themes").map((s) => String(s).trim()).filter(Boolean),
         note: (String(p.get("note") ?? "").trim() || null) as string | null,
-        companyName: (String(p.get("companyName") ?? "").trim() || null) as
-          | string
-          | null,
-        companySize: (String(p.get("companySize") ?? "").trim() || null) as
-          | string
-          | null,
-        industry: (String(p.get("industry") ?? "").trim() || null) as
-          | string
-          | null,
-        ageRange: (String(p.get("ageRange") ?? "").trim() || null) as
-          | string
-          | null,
-        style: (String(p.get("style") ?? "").trim() || null) as string | null,
+        companyName: (String(p.get("companyName") ?? "").trim() || null) as string | null,
+        companySize: (String(p.get("companySize") ?? "").trim() || null) as string | null,
+        industry: (String(p.get("industry") ?? "").trim() || null) as string | null,
+        ageRange: (String(p.get("ageRange") ?? "").trim() || null) as string | null,
+        style: (String(p.get("style") ?? "").trim() || null) as StylePref,
       };
     }
   }
 
-  // 2) application/json（一番扱いやすい）
+  // json
   if (ct.includes("application/json")) {
     const j = await req.json();
+    const normArr = (xs: unknown) => (Array.isArray(xs) ? xs : xs ? [xs] : []).map((x) => String(x).trim()).filter(Boolean);
     return {
       name: String(j.name ?? "").trim(),
       email: String(j.email ?? "").trim(),
       rid: String(j.rid ?? j.resultId ?? j.id ?? "").trim(),
-      assigneePref: (String(j.assigneePref ?? "either").trim() ||
-        "either") as ConsultantKey,
-      themes: normalizeThemes(j.themes),
+      assigneePref: (String(j.assigneePref ?? "either").trim() || "either") as ConsultantKey,
+      themes: normArr(j.themes),
       note: (j.note ? String(j.note).trim() : "") || null,
       companyName: (j.companyName ? String(j.companyName).trim() : "") || null,
       companySize: (j.companySize ? String(j.companySize).trim() : "") || null,
@@ -171,167 +154,159 @@ async function readBookingRequest(req: Request) {
     };
   }
 
-  // 未対応CTは空を返す（後段で400判定）
+  // fallback
   return {
     name: "",
     email: "",
     rid: "",
     assigneePref: "either" as ConsultantKey,
     themes: [] as string[],
-    note: null,
-    companyName: null,
-    companySize: null,
-    industry: null,
-    ageRange: null,
-    style: null,
+    note: null as string | null,
+    companyName: null as string | null,
+    companySize: null as string | null,
+    industry: null as string | null,
+    ageRange: null as string | null,
+    style: null as StylePref,
   };
 }
 
-// ====== Handler ======
+// ===== Handler =====
 export async function POST(req: Request) {
   try {
-    // ★ ここを三態対応の読取に置き換え
     const body = await readBookingRequest(req);
 
-    // --- 必須 ---
+    // 必須
     const name = body.name;
     const email = body.email;
     if (!name || !email) {
-      return NextResponse.json(
-        { ok: false, error: "missing name/email" },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, error: "missing name/email" }, { status: 400 });
     }
 
-    // --- 任意（hidden 推奨含む） ---
-    const resultId = body.rid;
-    const style = body.style;
+    // 任意
+    const resultId = body.rid || null;
+    const style: StylePref = (body.style ?? null) as StylePref;
     const assigneePref = body.assigneePref;
-    const themes = body.themes;
-    const note = body.note;
+    const themes = body.themes || [];
+    const note = body.note || null;
+    let companyName = body.companyName || null;
+    let companySize = body.companySize || null;
+    let industry = body.industry || null;
+    let ageRange = body.ageRange || null;
 
-    // 申込者が任意で入れた可能性（今はフォームに出していない想定）
-    let companyName = body.companyName;
-    let companySize = body.companySize;
-    let industry = body.industry;
-    let ageRange = body.ageRange;
+    // 担当決定
+    const assigned: ConsultantKey = assigneePref === "either" ? decideAssignee(themes, style) : assigneePref;
+    const assigneeForMail = assigned === "either" ? undefined : assigned;
 
-    // either のときだけ自動割当
-    const assigned: ConsultantKey =
-      assigneePref === "either" ? autoAssign(themes) : assigneePref;
-
-    // メールテンプレ側に渡す値（型注釈は付けない＝衝突を避ける）
-    const consultantForMail = assigned === "either" ? undefined : assigned;
-
-    // ====== DB 保存（best-effort） ======
+    // DB保存（best-effort）
     try {
-      const admin = createClient(
-        needEnv("NEXT_PUBLIC_SUPABASE_URL"),
-        needEnv("SUPABASE_SERVICE_ROLE_KEY"),
-        { auth: { persistSession: false } },
-      );
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (url && key) {
+        const admin = createClient(url, key, { auth: { persistSession: false } });
 
-      // --- 足りない会社情報は DB から補完（samurairesults -> consult_intake 最新） ---
-      if (
-        resultId &&
-        (!companyName || !companySize || !industry || !ageRange)
-      ) {
-        const { data: srow } = await admin
-          .from("samurairesults")
-          .select("company_name, company_size, industry, age_range")
-          .eq("id", resultId)
-          .maybeSingle();
-
-        if (srow) {
-          companyName ||= (srow as any).company_name ?? null;
-          companySize ||= (srow as any).company_size ?? null;
-          industry ||= (srow as any).industry ?? null;
-          ageRange ||= (srow as any).age_range ?? null;
-        }
-
-        if (!companyName || !companySize || !industry || !ageRange) {
-          const { data: ci } = await admin
-            .from("consult_intake")
+        // 既存データから不足分を補完
+        if (resultId && (!companyName || !companySize || !industry || !ageRange)) {
+          const { data: srow } = await admin
+            .from("samurairesults")
             .select("company_name, company_size, industry, age_range")
-            .eq("result_id", resultId)
-            .order("created_at", { ascending: false })
-            .limit(1);
-          if (ci?.[0]) {
-            companyName ||= (ci[0] as any).company_name ?? null;
-            companySize ||= (ci[0] as any).company_size ?? null;
-            industry ||= (ci[0] as any).industry ?? null;
-            ageRange ||= (ci[0] as any).age_range ?? null;
+            .eq("id", resultId)
+            .maybeSingle();
+
+          if (srow) {
+            companyName ||= (srow as any).company_name ?? null;
+            companySize ||= (srow as any).company_size ?? null;
+            industry ||= (srow as any).industry ?? null;
+            ageRange ||= (srow as any).age_range ?? null;
+          }
+
+          if (!companyName || !companySize || !industry || !ageRange) {
+            const { data: ci } = await admin
+              .from("consult_intake")
+              .select("company_name, company_size, industry, age_range")
+              .eq("result_id", resultId)
+              .order("created_at", { ascending: false })
+              .limit(1);
+            if (ci?.[0]) {
+              companyName ||= (ci[0] as any).company_name ?? null;
+              companySize ||= (ci[0] as any).company_size ?? null;
+              industry ||= (ci[0] as any).industry ?? null;
+              ageRange ||= (ci[0] as any).age_range ?? null;
+            }
           }
         }
-      }
 
-      // consult_intake に保存（存在するカラムだけ使う/ nullも許容）
-      const intake: Record<string, any> = {
-        result_id: resultId || null,
-        email,
-        name,
-        company_name: companyName,
-        company_size: companySize,
-        industry,
-        age_range: ageRange,
-        themes: themes.length ? themes : null,
-        note,
-        style,
-        assignee_pref: assigneePref,
-        assigned, // 実際に割り当てた担当
-      };
-      await admin.from("consult_intake").insert(intake);
-
-      // samurairesults にも補完（存在すれば）— null で上書きしないように注意
-      if (resultId) {
-        const patch: Record<string, any> = {
-          is_consult_request: true,
+        // consult_intake へ保存
+        const intake: Record<string, any> = {
+          result_id: resultId,
           email,
           name,
+          company_name: companyName,
+          company_size: companySize,
+          industry,
+          age_range: ageRange,
+          themes: themes.length ? themes : null,
+          note,
+          style,
+          assignee_pref: assigneePref,
+          assigned,
         };
-        if (companyName !== null) patch.company_name = companyName;
-        if (companySize !== null) patch.company_size = companySize;
-        if (industry !== null) patch.industry = industry;
-        if (ageRange !== null) patch.age_range = ageRange;
+        await admin.from("consult_intake").insert(intake);
 
-        await admin.from("samurairesults").update(patch).eq("id", resultId);
+        // samurairesults パッチ（存在すれば）
+        if (resultId) {
+          const patch: Record<string, any> = {
+            is_consult_request: true,
+            email,
+            name,
+          };
+          if (companyName !== null) patch.company_name = companyName;
+          if (companySize !== null) patch.company_size = companySize;
+          if (industry !== null) patch.industry = industry;
+          if (ageRange !== null) patch.age_range = ageRange;
+          await admin.from("samurairesults").update(patch).eq("id", resultId);
+        }
+      } else {
+        console.warn("[consult/booking] no supabase env; skip DB save");
       }
     } catch (dbErr) {
       console.error("[consult/booking] supabase save skipped:", dbErr);
-      // DB失敗でもメール送信とレスポンスは継続
+      // DB失敗でも進める
     }
 
-    // ====== メール送信 ======
+    // 予約URL（担当別SPIR優先）
+    const consultLink = makeConsultLink(req, assigned, resultId, email);
 
-    // 1) 申込者へ（予約URLつき）
-    const userMail = (
-      renderConsultIntakeMailToUser as unknown as (args: any) => any
-    )({
-      name,
-      consultant: consultantForMail,
-      resultId: resultId || undefined,
-      email,
+    // ===== メール送信 =====
+    // 1) 申込者へ（予約URLつき・宛名に様）
+    const userMail = (renderConsultIntakeMailToUser as unknown as (args: any) => any)({
+      toName: name,
+      toEmail: email,
+      rid: resultId || undefined,
+      company: companyName || undefined,
+      note,
+      assignee: assigneeForMail,
+      consultLink, // ★ ここがSPIR直リンク
     });
     await sendMail({
       to: email,
       subject: userMail.subject,
       html: userMail.html,
       text: userMail.text,
+      replyTo: process.env.MAIL_REPLY_TO || undefined,
+      tagId: `consult:intake_user${resultId ? `:${resultId}` : ""}`,
     });
 
-    // 2) 運用通知（補足を末尾に添付）— RID を必ず明記
-    const opsMail = (
-      renderConsultIntakeMailToOps as unknown as (args: any) => any
-    )({
-      email,
-      name,
-      companyName: companyName || undefined,
-      companySize: (companySize || "1-10") as any,
-      industry: (industry || "その他") as any,
-      resultId: resultId || undefined,
+    // 2) 運用宛
+    const opsMail = (renderConsultIntakeMailToOps as unknown as (args: any) => any)({
+      toName: name,
+      toEmail: email,
+      rid: resultId || undefined,
+      company: companyName || undefined,
+      note,
+      assignee: assigneeForMail,
     });
     await sendMail({
-      to: (process.env.MAIL_TO_OPS || "info@ourdx-mtg.com").trim(),
+      to: (process.env.MAIL_TO_OPS || process.env.MAIL_TO_TEST || email).trim(),
       subject: opsMail.subject,
       html: `${opsMail.html}
 <hr/>
@@ -344,29 +319,23 @@ export async function POST(req: Request) {
   <b>note:</b> ${note || "-"}
 </div>`,
       text: opsMail.text,
+      tagId: `consult:intake_ops${resultId ? `:${resultId}` : ""}`,
     });
 
-    // 3) 画面側へ返却（即リダイレクト用 URL も同梱）— RID も返す
-    const bookingUrl = makeBookingUrl(req, resultId || null, email);
+    // 3) 返却（フロント即遷移用）
     return NextResponse.json({
       ok: true,
       assigned,
-      bookingUrl,
-      rid: resultId || null,
+      bookingUrl: consultLink, // ★ フロントでもこのURLに遷移
+      rid: resultId,
     });
   } catch (e: any) {
     console.error("[api/consult/booking] failed:", e);
-    return NextResponse.json(
-      { ok: false, error: e?.message || String(e) },
-      { status: 500 },
-    );
+    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
   }
 }
 
-// GET等は許可しない（フォームPOST専用）
+// GETは許可しない（フォームPOST専用）
 export async function GET() {
-  return NextResponse.json(
-    { ok: false, error: "method_not_allowed" },
-    { status: 405 },
-  );
+  return NextResponse.json({ ok: false, error: "method_not_allowed" }, { status: 405 });
 }

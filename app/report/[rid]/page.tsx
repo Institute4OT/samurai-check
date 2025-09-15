@@ -90,12 +90,12 @@ export default async function ReportPage({ params }: PageProps) {
 
   // scores が不正/NULL → 結果画面へ退避（Finalize 未完の保険）
   const ScoresSchema = z.object({
-    delegation: z.number(),
-    orgDrag: z.number(),
-    commGap: z.number(),
-    updatePower: z.number(),
-    genGap: z.number(),
-    harassmentAwareness: z.number(),
+    delegation: z.coerce.number(),
+    orgDrag: z.coerce.number(),
+    commGap: z.coerce.number(),
+    updatePower: z.coerce.number(),
+    genGap: z.coerce.number(),
+    harassmentAwareness: z.coerce.number(),
   });
   const ok = ScoresSchema.safeParse(data.normalized_scores).success;
   if (!ok) {
