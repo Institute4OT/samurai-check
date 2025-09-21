@@ -1,373 +1,226 @@
-// /lib/samuraiJudge.ts
-// 秒速戦国チェック｜7タイプ判定ロジック（フル機能・型堅牢化）
+// lib/samuraiJudge.ts
+//
+// 📝 このファイルの考え方（超重要）
+// 1) まず「決定木ルール」で“そのタイプらしさの強い信号”が出ていれば即決します。
+//    ここで用いる境界値が `TH`（Threshold: しきい値）です。各キーごとに
+//    「以上（>=）」「以下（<=）」「未満（<）」の向きが決まっています（下に一覧あり）。
+//
+// 2) どのルールにも当てはまらない“曖昧ゾーン”では、各タイプの「中心像」へ
+//    どれだけ近いか（重み付き距離）で最寄りタイプを選びます。
+//    ここで使う中心値が `TARGET` です。TARGET は“しきい値”ではありません。
+//    以上 / 以下の判定は効きません。単に「近さ（distance）」を比べます。
+//
+// 3) 豊臣秀吉は「updatePower と commGap の両方が一定以上」の安全弁を維持。
+//    これを満たさない場合、曖昧ゾーンの最寄り計算からも除外します。
+// ---------------------------------------------------------------------------
 
-import type {
-  CategoryKey,
-  NormalizedCategoryScores,
-  SamuraiType,
-} from "@/types/diagnosis";
-import { ensureHarassmentAliases } from "@/lib/harassmentKey";
+import type { NormalizedCategoryScores, SamuraiType } from "@/types/diagnosis";
 
-/* ============================================================
-   型・設定
-   ============================================================ */
+/** しきい値：決定木で使う境界（TH = Threshold）
+ *
+ * ✅ ここに書かれた数値は “境界値” です。TARGET と違って **以上/以下の向きが決まっています**。
+ *
+ * 各キーの判定向き（by judgeByRule 内で使用）:
+ * - 斎藤道三:
+ *    - orgDrag >= saito_orgDrag（以上）
+ *    - delegation <  saito_delegationMax（未満）
+ * - 今川義元:
+ *    - harassmentAwareness >= imagawa_har（以上）
+ *    - updatePower         <  imagawa_updateMax（未満）
+ * - 真田幸村:
+ *    - updatePower >= sanada_update（以上）
+ *    - delegation >= sanada_delegation（以上）
+ * - 織田信長:
+ *    - updatePower >= nobunaga_update（以上）
+ *    - commGap    <= nobunaga_commMax（以下）
+ *    - genGap     <= nobunaga_genMax（以下）
+ * - 豊臣秀吉（安全弁も同値を使用）:
+ *    - updatePower >= toyotomi_update（以上）
+ *    - commGap    >= toyotomi_comm（以上）
+ * - 徳川家康:
+ *    - delegation >= ieyasu_delegation（以上）
+ *    - orgDrag    <= ieyasu_orgMax（以下）
+ * - 上杉謙信:
+ *    - updatePower         <= uesugi_updateMax（以下）
+ *    - genGap              >= uesugi_genGap（以上）
+ *    - harassmentAwareness <= uesugi_harMax（以下）
+ *    - orgDrag             <= uesugi_orgMax（以下）
+ */
+const TH = {
+  saito_orgDrag: 2.2,
+  saito_delegationMax: 2.0,
 
-export type RuleHit =
-  | "SANADA_RULE"
-  | "ODA_RULE"
-  | "TOYOTOMI_RULE"
-  | "TOKUGAWA_RULE"
-  | "DOSAN_RULE"
-  | "IMAGAWA_RULE"
-  | "UESUGI_FALLBACK";
+  imagawa_har: 2.0,
+  imagawa_updateMax: 2.2,
 
-export type JudgeConfig = {
-  /** カテゴリごとの重み（合致度スコア式で使用） */
-  weights: Record<CategoryKey, number>;
-  /** 各ルールのしきい値 */
-  thresholds: {
-    sanada_update_min: number;
-    sanada_delegation_min: number;
+  sanada_update: 2.4,
+  sanada_delegation: 2.0,
 
-    oda_update_min: number;
-    oda_comm_max: number;
-    oda_gen_max: number;
+  // ※ SACHIKOさんの基準に合わせて“革新TOPにふさわしい”強めのしきい値
+  nobunaga_update: 2.6,
+  nobunaga_commMax: 1.2,
+  nobunaga_genMax: 1.4,
 
-    toyotomi_update_min: number;
-    toyotomi_comm_min: number;
+  toyotomi_update: 1.6,
+  toyotomi_comm: 1.6,
 
-    tokugawa_delegation_min: number;
-    tokugawa_org_max: number;
+  ieyasu_delegation: 2.2,
+  ieyasu_orgMax: 1.2,
 
-    dosan_org_min: number;
+  uesugi_updateMax: 1.8,
+  uesugi_genGap: 2.0,
+  uesugi_harMax: 1.8,
+  uesugi_orgMax: 1.8,
+} as const;
 
-    imagawa_har_min: number;
-  };
-  /** ルール優先順（ヒットした複数候補があるときに先に当てる） */
-  rulePriority: RuleHit[];
-  /** タイブレークの総合優先順（カテゴリの重要度順） */
-  tieBreakPriority: CategoryKey[];
-  /** すべて決まらない時の最終フォールバック */
-  defaultFallback: SamuraiType;
-};
-
-/** 既定設定（9/9時点の挙動を尊重） */
-export const defaultJudgeConfig: JudgeConfig = {
-  weights: {
-    delegation: 1.0,
-    orgDrag: 1.0,
-    commGap: 1.0,
-    updatePower: 1.0,
-    genGap: 1.0,
-    harassmentAwareness: 1.0,
+/** 目標ベクトル：曖昧ゾーンでの“中心像”
+ *
+ * 🔎 TARGET は「こういう数値帯だとこのタイプらしいよね」という**中心値**です。
+ * “以上/以下”の判定では使いません。重み付き二乗距離で **近いほど** そのタイプに寄ります。
+ * （distance() で使用）
+ */
+const TARGET: Record<SamuraiType, NormalizedCategoryScores> = {
+  "斎藤道三型": {
+    updatePower: 1.4,
+    genGap: 1.6,
+    delegation: 1.4,
+    orgDrag: 2.6,          // 高い
+    harassmentAwareness: 1.8,
+    commGap: 1.6,
   },
-  thresholds: {
-    sanada_update_min: 2.4,
-    sanada_delegation_min: 2.0,
-
-    oda_update_min: 2.2,
-    oda_comm_max: 1.2,
-    oda_gen_max: 1.4,
-
-    toyotomi_update_min: 1.6,
-    toyotomi_comm_min: 1.6,
-
-    tokugawa_delegation_min: 2.2,
-    tokugawa_org_max: 1.2,
-
-    dosan_org_min: 2.2,
-
-    imagawa_har_min: 2.0,
+  "今川義元型": {
+    updatePower: 1.4,      // 低め
+    genGap: 1.6,
+    delegation: 1.6,
+    orgDrag: 1.8,
+    harassmentAwareness: 2.4, // 高い
+    commGap: 1.4,
   },
-  rulePriority: [
-    "SANADA_RULE",
-    "ODA_RULE",
-    "TOYOTOMI_RULE",
-    "TOKUGAWA_RULE",
-    "DOSAN_RULE",
-    "IMAGAWA_RULE",
-    "UESUGI_FALLBACK",
-  ],
-  tieBreakPriority: [
-    "updatePower",
-    "delegation",
-    "orgDrag",
-    "commGap",
-    "genGap",
-    "harassmentAwareness",
-  ],
-  defaultFallback: "上杉謙信型",
+  "真田幸村型": {
+    updatePower: 2.6,
+    genGap: 2.2,
+    delegation: 2.2,
+    orgDrag: 1.4,
+    harassmentAwareness: 1.4,
+    commGap: 1.6,
+  },
+  "織田信長型": {
+    updatePower: 2.6,      // 高い
+    genGap: 1.0,           // 低い
+    delegation: 1.8,
+    orgDrag: 1.6,
+    harassmentAwareness: 1.4,
+    commGap: 1.0,          // 低い
+  },
+  "豊臣秀吉型": {
+    updatePower: 2.0,
+    genGap: 2.0,
+    delegation: 2.0,
+    orgDrag: 1.6,
+    harassmentAwareness: 1.4,
+    commGap: 2.0,          // 高め
+  },
+  "徳川家康型": {
+    updatePower: 1.6,
+    genGap: 1.8,
+    delegation: 2.4,       // 高い
+    orgDrag: 1.0,          // 低い
+    harassmentAwareness: 1.4,
+    commGap: 1.6,
+  },
+  "上杉謙信型": {
+    updatePower: 1.6,      // 低め〜中
+    genGap: 2.2,           // 理念優先＝ジェネギャップ感じやすい
+    delegation: 1.8,
+    orgDrag: 1.4,          // 阻害は低め
+    harassmentAwareness: 1.2,
+    commGap: 1.6,
+  },
 };
 
-/* ============================================================
-   util
-   ============================================================ */
+/** 重み（distance の重要度） */
+const W = {
+  updatePower: 1.0,
+  genGap: 0.8,
+  delegation: 0.9,
+  orgDrag: 1.0,
+  harassmentAwareness: 1.0,
+  commGap: 0.9,
+} as const;
 
-const clamp03 = (v: number) =>
-  Math.max(0, Math.min(3, Number.isFinite(v) ? v : 0));
-const w = (v: number, weight: number) => clamp03(v) * weight;
+function sq(x: number) { return x * x; }
 
-/** 配列 indexOf の安全版（未定義は最下位扱い） */
-function safeIdx<T extends string>(arr: readonly T[], key: T | string): number {
-  const i = arr.indexOf(key as T);
-  return i >= 0 ? i : 999;
+/** 重み付き距離（小さいほど近い）— TARGET 用 */
+function distance(a: NormalizedCategoryScores, b: NormalizedCategoryScores): number {
+  return (
+    W.updatePower * sq(a.updatePower - b.updatePower) +
+    W.genGap * sq(a.genGap - b.genGap) +
+    W.delegation * sq(a.delegation - b.delegation) +
+    W.orgDrag * sq(a.orgDrag - b.orgDrag) +
+    W.harassmentAwareness * sq(a.harassmentAwareness - b.harassmentAwareness) +
+    W.commGap * sq(a.commGap - b.commGap)
+  );
 }
 
-/* ============================================================
-   ルール判定（ヒューリスティック）
-   ============================================================ */
+/** 1) ルールで確定（TH を使った決定木） */
+function judgeByRule(s: NormalizedCategoryScores): SamuraiType | null {
+  // 斎藤（支配・強権）
+  if (s.orgDrag >= TH.saito_orgDrag && s.delegation < TH.saito_delegationMax) return "斎藤道三型";
 
-type RuleCheck = { hit: boolean; type: SamuraiType; rule: RuleHit };
+  // 今川（停滞・守り過多）
+  if (s.harassmentAwareness >= TH.imagawa_har && s.updatePower < TH.imagawa_updateMax) return "今川義元型";
 
-function checkSanada(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
-  const t = c.thresholds;
-  return {
-    hit:
-      s.updatePower >= t.sanada_update_min &&
-      s.delegation >= t.sanada_delegation_min,
-    type: "真田幸村型",
-    rule: "SANADA_RULE",
-  };
-}
+  // 真田（理想）
+  if (s.updatePower >= TH.sanada_update && s.delegation >= TH.sanada_delegation) return "真田幸村型";
 
-function checkOda(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
-  const t = c.thresholds;
-  return {
-    hit:
-      s.updatePower >= t.oda_update_min &&
-      s.commGap <= t.oda_comm_max &&
-      s.genGap <= t.oda_gen_max,
-    type: "織田信長型",
-    rule: "ODA_RULE",
-  };
-}
-
-function checkToyotomi(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
-  const t = c.thresholds;
-  return {
-    hit:
-      s.updatePower >= t.toyotomi_update_min &&
-      s.commGap >= t.toyotomi_comm_min,
-    type: "豊臣秀吉型",
-    rule: "TOYOTOMI_RULE",
-  };
-}
-
-function checkTokugawa(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
-  const t = c.thresholds;
-  return {
-    hit:
-      s.delegation >= t.tokugawa_delegation_min &&
-      s.orgDrag <= t.tokugawa_org_max,
-    type: "徳川家康型",
-    rule: "TOKUGAWA_RULE",
-  };
-}
-
-function checkDosan(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
-  const t = c.thresholds;
-  return {
-    hit: s.orgDrag >= t.dosan_org_min,
-    type: "斎藤道三型",
-    rule: "DOSAN_RULE",
-  };
-}
-
-function checkImagawa(s: NormalizedCategoryScores, c: JudgeConfig): RuleCheck {
-  const t = c.thresholds;
-  return {
-    hit: s.harassmentAwareness >= t.imagawa_har_min,
-    type: "今川義元型",
-    rule: "IMAGAWA_RULE",
-  };
-}
-
-/* ============================================================
-   合致度スコア（タイブレーク時に比較）
-   - 9/9のバランスを参考：強み（updatePower/ delegation）をやや重視、
-     リスク側（orgDrag/commGap/genGap/harassmentAwareness）は抑制（小さいほど良い）
-   ============================================================ */
-
-export function compatibilityScoreByType(
-  s0: NormalizedCategoryScores,
-  cfg: JudgeConfig = defaultJudgeConfig,
-): Record<SamuraiType, number> {
-  const s = {
-    delegation: clamp03(s0.delegation),
-    orgDrag: clamp03(s0.orgDrag),
-    commGap: clamp03(s0.commGap),
-    updatePower: clamp03(s0.updatePower),
-    genGap: clamp03(s0.genGap),
-    harassmentAwareness: clamp03(s0.harassmentAwareness),
-  };
-  const wgt = cfg.weights;
-
-  const sanada =
-    +w(s.updatePower, wgt.updatePower) * 1.2 +
-    w(s.delegation, wgt.delegation) * 1.0 -
-    w(s.orgDrag, wgt.orgDrag) * 0.6 -
-    w(s.harassmentAwareness, wgt.harassmentAwareness) * 0.4;
-
-  const oda =
-    +w(s.updatePower, wgt.updatePower) * 1.1 -
-    w(s.commGap, wgt.commGap) * 0.9 -
-    w(s.genGap, wgt.genGap) * 0.7;
-
-  const toyotomi =
-    +w(s.updatePower, wgt.updatePower) * 0.9 + w(s.commGap, wgt.commGap) * 0.9;
-
-  const tokugawa =
-    +w(s.delegation, wgt.delegation) * 1.0 -
-    w(s.orgDrag, wgt.orgDrag) * 1.0 -
-    w(s.harassmentAwareness, wgt.harassmentAwareness) * 0.3;
-
-  const dosan =
-    +w(s.orgDrag, wgt.orgDrag) * 1.1 - w(s.delegation, wgt.delegation) * 0.5;
-
-  const imagawa =
-    +w(s.harassmentAwareness, wgt.harassmentAwareness) * 1.1 -
-    w(s.updatePower, wgt.updatePower) * 0.5;
-
-  const uesugi =
-    +w(s.updatePower, wgt.updatePower) * 0.6 +
-    w(s.delegation, wgt.delegation) * 0.6;
-
-  return {
-    真田幸村型: sanada,
-    織田信長型: oda,
-    豊臣秀吉型: toyotomi,
-    徳川家康型: tokugawa,
-    斎藤道三型: dosan,
-    今川義元型: imagawa,
-    上杉謙信型: uesugi,
-  };
-}
-
-/* ============================================================
-   説明付き判定（ルール→スコア→タイブレーク）
-   ============================================================ */
-
-export type ExplainResult = {
-  decided: SamuraiType;
-  primaryRule?: RuleHit;
-  /** どのルールがヒットしたか（上から順） */
-  ruleHits: Array<{ rule: RuleHit; type: SamuraiType }>;
-  /** タイブレーク比較のトレース */
-  tieBreakTrace: Array<{
-    key: CategoryKey;
-    winner?: SamuraiType;
-    values: Record<SamuraiType, number>;
-  }>;
-  snapshot: NormalizedCategoryScores;
-  configUsed: JudgeConfig;
-};
-
-/** 強み寄与（平均） */
-export const STRONG_KEYS: CategoryKey[] = ["updatePower", "delegation"];
-/** リスク抑制（平均） */
-export const RISK_KEYS: CategoryKey[] = [
-  "orgDrag",
-  "commGap",
-  "genGap",
-  "harassmentAwareness",
-];
-
-export function explainSamuraiDecision(
-  scores0: NormalizedCategoryScores,
-  cfg: JudgeConfig = defaultJudgeConfig,
-): ExplainResult {
-  // どちらのキーでも落ちないよう、まず揃える
-  const s = ensureHarassmentAliases({
-    delegation: clamp03(scores0.delegation),
-    orgDrag: clamp03(scores0.orgDrag),
-    commGap: clamp03(scores0.commGap),
-    updatePower: clamp03(scores0.updatePower),
-    genGap: clamp03(scores0.genGap),
-    harassmentAwareness: clamp03(scores0.harassmentAwareness),
-  });
-
-  // 1) ルール評価
-  const checks: RuleCheck[] = [
-    checkSanada(s, cfg),
-    checkOda(s, cfg),
-    checkToyotomi(s, cfg),
-    checkTokugawa(s, cfg),
-    checkDosan(s, cfg),
-    checkImagawa(s, cfg),
-  ];
-  const hits = checks.filter((c) => c.hit);
-  // ルール優先順で最初のヒットを採用（無ければ undefined）
-  const first = cfg.rulePriority
-    .map((r) => hits.find((h) => h.rule === r))
-    .find(Boolean);
-
-  // 2) 合致度スコア
-  const tbl = compatibilityScoreByType(s, cfg);
-  const byScore = (Object.keys(tbl) as SamuraiType[])
-    .map((t) => ({ type: t, score: Number(tbl[t] ?? 0) }))
-    .sort((a, b) => b.score - a.score);
-  const topScore = byScore[0]?.score ?? -Infinity;
-  let topGroup = byScore.filter((x) => Math.abs(x.score - topScore) < 1e-9);
-
-  // 3) タイブレーク（順に比較）
-  const trace: ExplainResult["tieBreakTrace"] = [];
-  if (topGroup.length > 1) {
-    for (const key of cfg.tieBreakPriority) {
-      const values: Record<SamuraiType, number> = Object.create(null);
-      for (const r of topGroup) values[r.type] = clamp03((s as any)[key]);
-
-      // 高いほど優先（updatePower/ delegation など）
-      let winner = topGroup
-        .slice()
-        .sort((a, b) => values[b.type] - values[a.type])[0];
-
-      trace.push({ key, winner: winner?.type, values });
-
-      // 同点が続く間は次のキーへ
-      if (!winner) continue;
-      const best = values[winner.type];
-      topGroup = topGroup.filter((x) => Math.abs(values[x.type] - best) < 1e-9);
-      if (topGroup.length === 1) break;
-    }
+  // 織田（革新）
+  if (s.updatePower >= TH.nobunaga_update && s.commGap <= TH.nobunaga_commMax && s.genGap <= TH.nobunaga_genMax) {
+    return "織田信長型";
   }
 
-  const decided: SamuraiType =
-    first?.type ?? topGroup[0]?.type ?? cfg.defaultFallback;
+  // 豊臣（共創）
+  if (s.updatePower >= TH.toyotomi_update && s.commGap >= TH.toyotomi_comm) return "豊臣秀吉型";
 
-  return {
-    decided,
-    primaryRule: first?.rule,
-    ruleHits: hits.map(({ rule, type }) => ({ rule, type })),
-    tieBreakTrace: trace,
-    snapshot: s,
-    configUsed: cfg,
-  };
+  // 家康（慎重・設計）
+  if (s.delegation >= TH.ieyasu_delegation && s.orgDrag <= TH.ieyasu_orgMax) return "徳川家康型";
+
+  // 上杉（理念）
+  if (
+    s.updatePower <= TH.uesugi_updateMax &&
+    s.genGap >= TH.uesugi_genGap &&
+    s.harassmentAwareness <= TH.uesugi_harMax &&
+    s.orgDrag <= TH.uesugi_orgMax
+  ) return "上杉謙信型";
+
+  return null;
 }
 
-/* ============================================================
-   互換API
-   ============================================================ */
+/** 2) 最寄りタイプ（曖昧ゾーンの処理）。TARGET と distance を使用。 */
+function nearestType(s: NormalizedCategoryScores): SamuraiType {
+  let best: SamuraiType = "上杉謙信型";
+  let bestD = Number.POSITIVE_INFINITY;
 
-export function judgeSamurai(
-  scores: NormalizedCategoryScores,
-  cfg: JudgeConfig = defaultJudgeConfig,
-): SamuraiType {
-  return explainSamuraiDecision(scores, cfg).decided;
+  (Object.keys(TARGET) as SamuraiType[]).forEach(t => {
+    // 豊臣の安全弁：しきい値を満たさない場合は候補から除外
+    if (t === "豊臣秀吉型" && !(s.updatePower >= TH.toyotomi_update && s.commGap >= TH.toyotomi_comm)) return;
+
+    const d = distance(s, TARGET[t]);
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+    }
+  });
+
+  return best;
 }
 
-/** 既存互換（旧名） */
-export const judgeSamuraiType = judgeSamurai;
+/** 公開API：最終判定
+ * 1) ルール（TH）で確定
+ * 2) ダメなら最寄りタイプ（TARGET×distance）
+ */
+export function judgeSamurai(s: NormalizedCategoryScores): SamuraiType {
+  const ruled = judgeByRule(s);
+  if (ruled) return ruled;
 
-/* ============================================================
-   互換のための簡易エクスポート
-   - 他モジュールが `samuraiDescriptions` を期待しても落ちないようダミーを提供
-   ============================================================ */
-export const samuraiDescriptions = {
-  SANADA: { title: "" } as any,
-  ODA: { title: "" } as any,
-  TOYOTOMI: { title: "" } as any,
-  TOKUGAWA: { title: "" } as any,
-  UESUGI: { title: "" } as any,
-  SAITO: { title: "" } as any,
-  IMAGAWA: { title: "" } as any,
-} as any;
+  return nearestType(s);
+}
