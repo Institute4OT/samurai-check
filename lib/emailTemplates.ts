@@ -1,12 +1,12 @@
 // /lib/emailTemplates.ts
 // ============================================================
-// 相談申込まわりのメールテンプレート（ユーザー/運用）
-// ・宛名に必ず「様」を付ける（withSama）
-// ・件名に【武将タイプ診断アプリ】＋▶/■ で視認性UP
-// ・IOTフッター（社名・住所・連絡先）を明記
-// ・consultLink が無い場合も /consult にフォールバック
-// ・テキスト版も同梱
-// ・report 系は emailTemplatesV2.ts を利用（re-export 同梱）
+// メールテンプレート（相談申込まわり／レポート系はV2に委譲）
+//
+// ✅ 宛名に必ず「様」を付ける（withSama）
+// ✅ 件名に【武将タイプ診断アプリ】＋▶/■ で視認性UP
+// ✅ IOTフッター（社名・住所・連絡先）を明記
+// ✅ 相談導線は /consult にフォールバック（rid/email/utm 付与）
+// ✅ レポート導線は emailTemplatesV2 側で /report/<rid> 固定（※ここから re-export）
 // ============================================================
 
 export type MailRender = { subject: string; html: string; text: string };
@@ -17,22 +17,23 @@ type ConsultArgs = {
   company?: string | null;
   note?: string | null;
   rid?: string | null;
-  consultLink?: string | null;
+  consultLink?: string | null; // 既定: /consult
   assignee?: "ishijima" | "morigami" | string | null;
 };
 
+// --- 環境値 ---
 const APP_BASE = (
   process.env.NEXT_PUBLIC_APP_URL ||
   process.env.NEXT_PUBLIC_BASE_URL ||
   "http://localhost:3000"
-).replace(/\/$/, "");
+).replace(/\/$/, ""); // 末尾スラ削除
 
 const IOT_MAIL = process.env.MAIL_REPLY_TO || "info@ourdx-mtg.com";
-const IOT_ADDR =
-  "〒150-0001 東京都渋谷区神宮前2-9-4 原宿YNビル6F";
+const IOT_ADDR = "〒150-0001 東京都渋谷区神宮前2-9-4 原宿YNビル6F";
 const IOT_NAME_JA =
   "一般社団法人 企業の未来づくり研究所（Institute for Our Transformation）";
 
+// --- 共通ユーティリティ ---
 function withSama(name?: string | null) {
   const n = String(name ?? "").trim();
   if (!n) return "ご担当者様";
@@ -47,7 +48,17 @@ function esc(s: string) {
     .replace(/"/g, "&quot;");
 }
 
-function ensureConsultLink(link?: string | null, rid?: string | null, email?: string | null) {
+/**
+ * 相談導線のURL生成
+ * - ベース未指定なら /consult にフォールバック
+ * - rid / email / utm_* を付与（重複付与はしない）
+ * - ※レポートURLは別ファイル(emailTemplatesV2)で /report/<rid> 固定
+ */
+function ensureConsultLink(
+  link?: string | null,
+  rid?: string | null,
+  email?: string | null,
+) {
   let url = String(link || `${APP_BASE}/consult`);
   try {
     const u = new URL(url);
@@ -58,7 +69,9 @@ function ensureConsultLink(link?: string | null, rid?: string | null, email?: st
     if (!u.searchParams.get("utm_campaign")) u.searchParams.set("utm_campaign", "consult_intake");
     if (!u.searchParams.get("utm_content")) u.searchParams.set("utm_content", "cta_consult");
     url = u.toString();
-  } catch {}
+  } catch {
+    // URL でない文字列が来た場合はそのまま返す（実害回避）
+  }
   return url;
 }
 
@@ -74,13 +87,13 @@ function footerHtml() {
   `.trim();
 }
 
-/* ============================================================
- * 1) ユーザー宛：相談申込 受付メール
- * ============================================================ */
+// ============================================================
+// 1) ユーザー宛：相談申込 受付メール
+// ============================================================
 export function renderConsultIntakeMailToUser(args: ConsultArgs): MailRender {
   const toName = withSama(args.toName);
   const rid = args.rid || "";
-  const consultUrl = ensureConsultLink(args.consultLink, args.rid || undefined, args.toEmail);
+  const consultUrl = ensureConsultLink(args.consultLink, rid || undefined, args.toEmail);
 
   const subject =
     `【武将タイプ診断アプリ】▶ 無料個別相談のお申し込みを受け付けました` +
@@ -125,13 +138,14 @@ export function renderConsultIntakeMailToUser(args: ConsultArgs): MailRender {
   return { subject, html, text };
 }
 
-/* ============================================================
- * 2) 運用（IOT）宛：相談申込 通知メール
- * ============================================================ */
+// ============================================================
+// 2) 運用（IOT）宛：相談申込 通知メール
+// ============================================================
 export function renderConsultIntakeMailToOps(args: ConsultArgs): MailRender {
   const rid = args.rid || "";
   const toName = withSama(args.toName);
-  const consultUrl = ensureConsultLink(args.consultLink, args.rid || undefined, args.toEmail);
+  const consultUrl = ensureConsultLink(args.consultLink, rid || undefined, args.toEmail);
+
   const who =
     args.assignee === "morigami"
       ? "担当候補：森上"
@@ -179,13 +193,13 @@ export function renderConsultIntakeMailToOps(args: ConsultArgs): MailRender {
   return { subject, html, text };
 }
 
-/* ============================================================
- * 3) ガイドメール（ユーザーへ：予約導線メイン）
- * ============================================================ */
+// ============================================================
+// 3) ガイドメール（ユーザーへ：予約導線メイン）
+// ============================================================
 export function buildConsultEmail(args: ConsultArgs): { user: MailRender } {
   const toName = withSama(args.toName);
   const rid = args.rid || "";
-  const consultUrl = ensureConsultLink(args.consultLink, args.rid || undefined, args.toEmail);
+  const consultUrl = ensureConsultLink(args.consultLink, rid || undefined, args.toEmail);
 
   const assigneeNote =
     args.assignee === "morigami"
@@ -222,9 +236,12 @@ export function buildConsultEmail(args: ConsultArgs): { user: MailRender } {
   return { user: { subject, html, text } };
 }
 
-// --- report 系の re-export（★互換エイリアスつき） ---
+// ============================================================
+// 4) レポート系の re-export（★旧名互換つき）
+//    ↳ 実装は emailTemplatesV2 側で /report/<rid> 固定。
+// ============================================================
 export {
-  buildReportEmailV2,                       // 新実装
-  buildReportEmailV2 as buildReportEmail,   // 互換用：旧名で import されてもOKにする
+  buildReportEmailV2,                     // 新実装
+  buildReportEmailV2 as buildReportEmail, // 旧名で import されてもOKにする
   type ReportEmailV2Input,
 } from "./emailTemplatesV2";

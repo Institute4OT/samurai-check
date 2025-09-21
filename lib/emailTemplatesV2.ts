@@ -2,10 +2,10 @@
 // ============================================================
 // 詳細レポート通知メール（V2・フル版）
 // ・宛名に「様」付与
-// ・rid / email / UTM を常に付与
 // ・会社規模で導線をセグメント（<=50: シェア/LINE、>=51: 相談CTA）
 // ・プレヘッダー、HTML/テキスト両方返却
 // ・フッターに IOT 情報（社名・住所・連絡先）を明記
+// ・★レポートURLは /report/<rid> 固定（UTMのみ付与。rid/emailはクエリ付与しない）★
 // ============================================================
 
 export type MailRender = { subject: string; html: string; text: string };
@@ -40,9 +40,9 @@ const BOOKING_BASE = (
 const LINE_OC_URL = (process.env.NEXT_PUBLIC_LINE_OC_URL || "").trim();
 
 const IOT_MAIL = process.env.MAIL_REPLY_TO || "info@ourdx-mtg.com";
-const IOT_ADDR =
-  "〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F";
-const IOT_NAME_JA = "一般社団法人 企業の未来づくり研究所（Institute for Our Transformation）";
+const IOT_ADDR = "〒150-0001 東京都渋谷区神宮前6-29-4 原宿小宮ビル6F";
+const IOT_NAME_JA =
+  "一般社団法人 企業の未来づくり研究所（Institute for Our Transformation）";
 
 function ensureSama(name?: string | null) {
   const n = (name ?? "").trim();
@@ -71,42 +71,47 @@ function withRidEmailUtm(
   }
 }
 
+// ★UTMのみ付与（rid/emailは付けない）
+function addUtmOnly(url: string, campaign: string, content: string, utmId?: string) {
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has("utm_source")) u.searchParams.set("utm_source", "samurai-check");
+    if (!u.searchParams.has("utm_medium")) u.searchParams.set("utm_medium", "email");
+    if (!u.searchParams.has("utm_campaign")) u.searchParams.set("utm_campaign", campaign);
+    if (!u.searchParams.has("utm_content")) u.searchParams.set("utm_content", content);
+    if (utmId && !u.searchParams.has("utm_id")) u.searchParams.set("utm_id", utmId);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** 会社規模：'small' (<=50) / 'large' (>=51) */
 function sizeBucket(v?: string) {
   if (!v) return "small";
   const s = String(v).trim();
-  // 記号の正規化（全角/半角の波線・ダッシュをハイフンへ、末尾の「名」除去）
   const t = s
     .replace(/[〜～~–—－]/g, "-")
     .replace(/名/g, "")
     .replace(/\s+/g, "")
     .toLowerCase();
 
-  // 例: "1001以上" / "1001+" / "51以上"
   const mPlus = t.match(/(\d+)\s*(\+|以上)$/);
   if (mPlus) {
     const n = Number(mPlus[1]);
     return n >= 51 ? "large" : "small";
   }
-
-  // 例: "50以下"
   if (/(\d+)\s*以下$/.test(t)) {
     const n = Number(RegExp.$1);
     return n <= 50 ? "small" : "large";
   }
-
-  // 例: "11-50", "51-100"
   const mRange = t.match(/(\d+)\s*-\s*(\d+)/);
   if (mRange) {
     const max = Number(mRange[2]);
     return max <= 50 ? "small" : "large";
   }
-
-  // 明示パターン
   if (/^(1-10|11-50)$/.test(t)) return "small";
   if (/^(51-100|101-300|301-1000|1001-.*|1001\+|1001以上)$/.test(t)) return "large";
-
-  // 不明なら small（安全側）
   return "small";
 }
 
@@ -120,13 +125,11 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
   const toName = ensureSama(input.toName);
   const bucket = sizeBucket(input.companySize);
 
-  const reportUrl = withRidEmailUtm(
-    input.reportLink || `${APP_BASE}/report/${encodeURIComponent(rid)}`,
-    rid,
-    input.email,
-    "report_ready",
-  );
+  // ★レポートURLは /report/<rid> 固定。UTMのみ付与（rid/emailは付けない）
+  const reportBase = input.reportLink || `${APP_BASE}/report/${encodeURIComponent(rid)}`;
+  const reportUrl = addUtmOnly(reportBase, "report_ready", "cta_report", rid);
 
+  // 相談／シェア／LINE は従来通り rid/email を付与してOK
   const consultUrl = withRidEmailUtm(
     input.consultLink || BOOKING_BASE,
     rid,
@@ -169,11 +172,7 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
         ▶ 診断アプリを紹介・シェアする
       </a>
     </p>
-    ${
-      lineUrl
-        ? `<p style="font-size:12px;color:#555;margin-top:10px">情報交換用の LINE オープンチャットも開設しています：<a href="${lineUrl}">参加リンク</a></p>`
-        : ""
-    }
+    ${lineUrl ? `<p style="font-size:12px;color:#555;margin-top:10px">情報交換用の LINE オープンチャットも開設しています：<a href="${lineUrl}">参加リンク</a></p>` : ""}
   `;
 
   const segLargeHtml = `
@@ -199,7 +198,6 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
 
   const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,'Apple Color Emoji','Segoe UI Emoji';line-height:1.7;color:#111">
-      <!-- プレヘッダー -->
       <div style="display:none;max-height:0;overflow:hidden;color:transparent;opacity:0;visibility:hidden">${esc(preheader)}</div>
 
       <p>${esc(toName)}、こんにちは。IOT（企業の未来づくり研究所）です。</p>
