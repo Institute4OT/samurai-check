@@ -1,5 +1,5 @@
 // app/report/[rid]/page.tsx
-import { notFound } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import ReportTemplate from "@/components/report/ReportTemplate";
@@ -9,181 +9,191 @@ import {
   type ScorePattern,
   type QuestionId,
 } from "@/types/diagnosis";
-// ★ 結果画面と統一のタイプ決定
-import { resolveSamuraiType } from "@/lib/result/normalize";
+import { judgeSamurai } from "@/lib/samuraiJudge"; // ← 修正：存在するエクスポート名を使用
 import { TYPE_CONTENTS } from "@/lib/report/typeContents";
 import { getPersonalizedComments } from "@/lib/report/personalization";
-import { ensureHarassmentAliases } from "@/lib/harassmentKey";
 
+export const dynamic = "force-dynamic";
 export const revalidate = 0;
-export const runtime = "nodejs";
 
+// ---- Util ----
 const Rid = z.string().uuid();
 
-/** Q1〜Q16 を string で必ず埋める */
+type Row = Record<string, any>;
+const TABLE_CANDIDATES = [
+  "diagnoses",
+  "samurairesults",
+  "samurai_results",
+  "samurairesult",
+  "results",
+] as const;
+
+function pickFirst<T>(...vals: (T | null | undefined)[]) {
+  for (const v of vals) if (v !== null && v !== undefined) return v as T;
+  return undefined;
+}
+
+// harassment の表記ゆれを吸収
+function ensureHarassmentAliases<T extends Record<string, any>>(
+  scores: T,
+): T & { harassmentAwareness?: number; harassmentRisk?: number } {
+  const v = Number.isFinite(scores["harassmentAwareness"])
+    ? scores["harassmentAwareness"]
+    : Number(scores["無自覚ハラ傾向"] ?? scores["harassment_awareness"] ?? 0);
+  const r = Number.isFinite(scores["harassmentRisk"])
+    ? scores["harassmentRisk"]
+    : Number(scores["無自覚ハラスメント傾向"] ?? scores["harassment_risk"] ?? v ?? 0);
+  return { ...scores, harassmentAwareness: v, harassmentRisk: r };
+}
+
+// 受け取り形の違いを正規化して NormalizedCategoryScores をつくる
+function coerceScores(src: any): NormalizedCategoryScores | null {
+  if (!src) return null;
+
+  // 配列（categories_json 等）
+  if (Array.isArray(src) && src.length >= 6) {
+    // 想定： deleg/org/comm/update/gen/harassment*
+    const n = (i: number) => Number(src[i] ?? 0);
+    const obj = {
+      delegation: n(0),
+      orgDrag: n(1),
+      commGap: n(2),
+      updatePower: n(3),
+      genGap: n(4),
+      harassmentAwareness: n(5),
+    };
+    return obj as NormalizedCategoryScores;
+  }
+
+  // オブジェクト系
+  const o = typeof src === "object" ? (src as Record<string, any>) : {};
+  const val = (a: string[], fallback = 0) => {
+    for (const k of a) {
+      const v = o[k];
+      if (v !== undefined && v !== null) return Number(v);
+    }
+    return fallback;
+  };
+
+  const base = {
+    delegation: val(["delegation", "権限委譲・構造健全度", "delegation_score"]),
+    orgDrag: val(["orgDrag", "組織進化阻害", "org_drag"]),
+    commGap: val(["commGap", "コミュ力誤差", "comm_gap"]),
+    updatePower: val(["updatePower", "アップデート力", "update_power"]),
+    genGap: val(["genGap", "ジェネギャップ感覚", "gen_gap"]),
+    harassmentAwareness: val([
+      "harassmentAwareness",
+      "harassment_awareness",
+      "無自覚ハラ傾向",
+      "無自覚ハラスメント傾向",
+      "harassmentRisk", // 古い保存で混在しているケースの救済
+    ]),
+  };
+
+  return ensureHarassmentAliases(base) as NormalizedCategoryScores;
+}
+
+// Q1〜Q16 を必ず埋めて ScorePattern を返す
 function coerceScorePattern(v: unknown): ScorePattern {
   const src = (v && typeof v === "object" ? (v as Record<string, unknown>) : {}) as Record<
     string,
     unknown
   >;
-  const qs: QuestionId[] = [
-    "Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8",
-    "Q9","Q10","Q11","Q12","Q13","Q14","Q15","Q16",
-  ];
+
   const out: Record<QuestionId, string> = {} as any;
-  for (const q of qs) {
-    const raw = src[q];
+  for (let i = 1 as const; i <= 16; i++) {
+    const k = `Q${i}` as QuestionId;
+    const raw = src[k];
     let text = "";
     if (Array.isArray(raw)) {
       const first = (raw as unknown[])[0];
       text = typeof first === "string" ? first : String(first ?? "");
     } else if (typeof raw === "string") text = raw;
     else if (raw != null) text = String(raw);
-    out[q] = text ?? "";
+    out[k] = text ?? "";
   }
-  return out as ScorePattern;
+  return out as ScorePattern; // ← 修正：型を ScorePattern に
 }
 
-/** DB行 → 共通形 */
-function normalizeRow(row: any): {
-  id: string;
-  company_size?: string | null;
-  normalized_scores?: Record<string, unknown> | null;
-  scores?: Record<string, unknown> | null;
-  categories_json?: Array<{ key: string; score: number }> | null;
-  samurai_type?: string | null;
-  score_pattern?: unknown;
-} {
-  if (!row) {
-    return {
-      id: "",
-      company_size: null,
-      normalized_scores: null,
-      scores: null,
-      categories_json: null,
-      samurai_type: null,
-      score_pattern: null,
-    };
-  }
-  return {
-    id: row.id,
-    company_size: row.company_size ?? row.size ?? null,
-    normalized_scores: row.normalized_scores ?? row.scores ?? null,
-    scores: row.scores ?? row.normalized_scores ?? null,
-    categories_json: row.categories_json ?? row.categories ?? row.categoriesJson ?? null,
-    samurai_type: row.samurai_type ?? row.type ?? null,
-    score_pattern: row.score_pattern ?? row.pattern ?? row.answer_snapshot ?? null,
-  };
-}
-
-/** キー名ゆれ（snake_case/日本語）を camelCase に正規化 */
-function normalizeKey(k: string): keyof NormalizedCategoryScores {
-  const s = String(k || "").trim();
-  const map: Record<string, keyof NormalizedCategoryScores> = {
-    delegation: "delegation",
-    org_drag: "orgDrag",
-    orgDrag: "orgDrag",
-    comm_gap: "commGap",
-    commGap: "commGap",
-    update_power: "updatePower",
-    updatePower: "updatePower",
-    gen_gap: "genGap",
-    genGap: "genGap",
-    harassment: "harassmentAwareness",
-    harassment_awareness: "harassmentAwareness",
-    harassment_risk: "harassmentAwareness",
-    "無自覚ハラ傾向": "harassmentAwareness",
-    "無自覚ハラスメント傾向": "harassmentAwareness",
-    "権限委譲・構造健全度": "delegation",
-    "組織進化阻害": "orgDrag",
-    "コミュ力誤差": "commGap",
-    "アップデート力": "updatePower",
-    "ジェネギャップ感覚": "genGap",
-  };
-  return (map[s] || (s as keyof NormalizedCategoryScores)) as keyof NormalizedCategoryScores;
-}
-
-/** 任意の形から NormalizedCategoryScores を復元（フェイルオープン） */
-function buildScores(input: {
-  objectLike?: Record<string, unknown> | null;
-  arrayLike?: Array<{ key: any; score: any }> | null;
-}): NormalizedCategoryScores | null {
-  let obj: Record<string, unknown> | null = null;
-
-  if (input.objectLike && typeof input.objectLike === "object" && !Array.isArray(input.objectLike)) {
-    obj = { ...input.objectLike };
-  }
-
-  if (!obj && Array.isArray(input.arrayLike) && input.arrayLike.length > 0) {
-    obj = {};
-    for (const it of input.arrayLike) {
-      if (!it) continue;
-      const k = normalizeKey((it as any).key ?? "");
-      obj[k] = (it as any).score;
-    }
-  }
-
-  if (!obj) return null;
-
-  obj = ensureHarassmentAliases(obj);
-
-  const num = (v: any) => (v == null || v === "" ? 0 : Number(v) || 0);
-  const out: NormalizedCategoryScores = {
-    delegation: num(obj["delegation"]),
-    orgDrag: num(obj["orgDrag"]),
-    commGap: num(obj["commGap"]),
-    updatePower: num(obj["updatePower"]),
-    genGap: num(obj["genGap"]),
-    harassmentAwareness: num(obj["harassmentAwareness"]),
-  };
-  return out;
-}
-
-type PageProps = { params: { rid: string } };
-
-export default async function ReportPage({ params }: PageProps) {
-  const rid = Rid.safeParse(params.rid);
-  if (!rid.success) return notFound();
-
+// ---- Supabase fetcher（表記ゆれを全部吸う）----
+async function loadByRid(rid: string) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
 
-  // 1) diagnoses を優先
-  let { data, error } = await supabase
-    .from("diagnoses")
-    .select(
-      "id, company_size, normalized_scores, scores, categories_json, categories, samurai_type, score_pattern, pattern, answer_snapshot"
-    )
-    .eq("id", rid.data)
-    .limit(1)
-    .maybeSingle();
+  let row: Row | null = null;
+  let fromTable: string | null = null;
 
-  // 2) 無ければ samurairesults
-  if (error || !data) {
-    const fb = await supabase
-      .from("samurairesults")
-      .select(
-        "id, company_size, size, normalized_scores, scores, categories_json, categories, samurai_type, type, score_pattern, pattern, answer_snapshot"
-      )
-      .eq("id", rid.data)
+  for (const t of TABLE_CANDIDATES) {
+    const { data, error } = await supabase
+      .from(t)
+      .select("*")
+      .eq("id", rid)
       .limit(1)
       .maybeSingle();
-    data = fb.data as any;
+
+    if (error || !data) continue;
+    row = data;
+    fromTable = t;
+    break;
   }
 
-  if (!data) return notFound(); // rid は正しいが DB に無い（非常に稀）
+  if (!row) return null;
 
-  const row = normalizeRow(data);
+  const companySize =
+    pickFirst<string>(row.company_size, row.companySize, row.size, row.org_size) ?? "unknown";
 
-  // --- スコア復元（オブジェクト or 配列 どちらからでも） ---
+  const normalized =
+    coerceScores(
+      pickFirst<any>(
+        row.normalized_scores,
+        row.scores,
+        row.categories_json,
+        row.categories,
+        row.category_scores,
+        row["スコア"],
+      ),
+    ) ?? null;
+
+  const samuraiType =
+    (row.samurai_type as SamuraiType | undefined) ||
+    (row.type as SamuraiType | undefined) ||
+    (row.result_type as SamuraiType | undefined) ||
+    undefined;
+
+  const scorePattern =
+    pickFirst<any>(row.score_pattern, row.pattern_json, row.answers_json, row.raw_scores) ?? {};
+
+  return {
+    fromTable,
+    companySize,
+    normalized,
+    samuraiType,
+    scorePattern,
+    id: rid,
+  };
+}
+
+// ---- Page ----
+type PageProps = { params: { rid: string } };
+
+export default async function ReportPage({ params }: PageProps) {
+  const ridParse = Rid.safeParse(params.rid);
+  if (!ridParse.success) {
+    redirect(`/result?rid=${encodeURIComponent(params.rid)}`);
+  }
+  const rid = ridParse.data;
+
+  const loaded = await loadByRid(rid);
+
+  // どのテーブルにも無い → 結果画面に逃がす
+  if (!loaded) {
+    redirect(`/result?rid=${encodeURIComponent(rid)}`);
+  }
+
   const scores =
-    buildScores({
-      objectLike: row.normalized_scores ?? row.scores ?? null,
-      arrayLike: row.categories_json ?? null,
-    }) ||
-    // どうしても無い場合は 0 埋め（描画を止めない）
+    (loaded!.normalized as NormalizedCategoryScores | null) ??
     ({
       delegation: 0,
       orgDrag: 0,
@@ -191,18 +201,17 @@ export default async function ReportPage({ params }: PageProps) {
       updatePower: 0,
       genGap: 0,
       harassmentAwareness: 0,
-    } as NormalizedCategoryScores);
+    } satisfies NormalizedCategoryScores);
 
-  // ★ 結果画面と同じロジックでタイプ確定
+  // 保存済みが無ければスコアから再計算
   const samuraiType: SamuraiType =
-    resolveSamuraiType(typeof row.samurai_type === "string" ? row.samurai_type : "", scores) ||
-    ((row.samurai_type as SamuraiType | undefined) ?? "豊臣秀吉型");
+    (loaded!.samuraiType as SamuraiType | undefined) || judgeSamurai(scores);
 
   const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[samuraiType];
-  if (!content) return notFound();
+  if (!content) notFound();
 
   const personal = getPersonalizedComments({
-    scorePattern: coerceScorePattern(row.score_pattern),
+    scorePattern: coerceScorePattern(loaded!.scorePattern), // ← 修正：ScorePattern で渡る
     normalizedScores: scores,
     maxItems: 2,
   });
@@ -215,10 +224,10 @@ export default async function ReportPage({ params }: PageProps) {
   return (
     <main className="container py-6">
       <ReportTemplate
-        diagId={row.id}
+        diagId={loaded!.id}
         samuraiType={samuraiType}
         normalizedScores={scores}
-        companySize={(row.company_size as string | undefined) ?? "unknown"}
+        companySize={loaded!.companySize}
         content={content}
         personal={personal}
         openChat={openChat}

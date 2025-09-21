@@ -1,4 +1,3 @@
-// app/api/report-request/route.ts
 /* eslint-disable no-console */
 import { NextRequest, NextResponse } from "next/server";
 import { sendMail } from "@/lib/mail";
@@ -6,6 +5,7 @@ import {
   buildReportEmailV2,
   type ReportEmailV2Input,
 } from "@/lib/emailTemplatesV2";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
@@ -74,30 +74,65 @@ function bucket(size?: string | null) {
   return "small";
 }
 
+async function readBody(req: NextRequest) {
+  const ct = req.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return await req.json().catch(() => ({} as any));
+  if (ct.includes("multipart/form-data")) {
+    const fd = await req.formData();
+    const o: Record<string, any> = {};
+    fd.forEach((v, k) => (o[k] = typeof v === "string" ? v : v.name));
+    return o;
+  }
+  return Object.fromEntries(req.nextUrl.searchParams.entries());
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await (async () => {
-      const ct = req.headers.get("content-type") || "";
-      if (ct.includes("application/json")) return await req.json().catch(() => ({} as any));
-      if (ct.includes("multipart/form-data")) {
-        const fd = await req.formData();
-        const o: Record<string, any> = {};
-        fd.forEach((v, k) => (o[k] = typeof v === "string" ? v : v.name));
-        return o;
-      }
-      return Object.fromEntries(req.nextUrl.searchParams.entries());
-    })();
+    const body = await readBody(req);
 
     const rid = param(body, "rid", "resultId", "id") || null;
     const toName = param(body, "name", "toName", "userName") || "ご担当者さま";
     const email = param(body, "email", "to");
     const typeName = param(body, "samuraiType", "typeName", "type") || "（タイプ判定中）";
     const companySize = param(body, "company_size", "companySize", "size") || "";
+
+    // 申込フォーム系（DB保存用）
+    const companyName = param(body, "company_name", "companyName", "company") || "";
+    const industry = param(body, "industry") || "";
+    const ageRange = param(body, "age_range", "ageRange") || "";
+
     const overrideReport = param(body, "reportLink", "report_url");
     const overrideConsult = param(body, "consultLink", "consult_url");
     const overrideShare = param(body, "shareLink", "share_url");
 
     if (!EMAIL_RE.test(email)) return err("invalid_email", 400);
+
+    // --- DB upsert（samurairesults）: ここを追加 ---
+    try {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+      const admin = createClient(url, key, { auth: { persistSession: false } });
+
+      await admin
+        .from("samurairesults")
+        .upsert(
+          {
+            id: rid ?? undefined,
+            name: toName || null,
+            email,
+            company_name: companyName || null,
+            company_size: companySize || null, // snake
+            companySize: companySize || null,   // camel（どちらでも読めるよう重複保存）
+            industry: industry || null,
+            age_range: ageRange || null,
+            is_consult_candidate: bucket(companySize) === "large",
+          },
+          { onConflict: "id", ignoreDuplicates: false },
+        );
+    } catch (e) {
+      console.error("[report-request] upsert error:", e);
+      // 失敗してもメール送信は続けます
+    }
 
     const { reportLink, consultLink, shareLink } = buildLinks(req, rid, {
       report: overrideReport || undefined,
@@ -114,6 +149,7 @@ export async function POST(req: NextRequest) {
       reportLink,
       consultLink,
       shareLink,
+      // ★元コードの日本語プレフィックスをそのまま維持
       titlePrefix: seg === "large" ? "【武将タイプ診断アプリ特典】" : "【武将タイプ診断アプリ】",
     };
     const mail = buildReportEmailV2(input);
