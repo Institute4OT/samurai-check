@@ -1,5 +1,5 @@
 // testSamuraiJudge.ts
-import { judgeSamuraiType } from "./lib/samuraiJudge";
+import { judgeSamurai } from "./lib/samuraiJudge";
 import type { SamuraiType, NormalizedCategoryScores } from "./types/diagnosis";
 
 // 期待パターン（NormalizedCategoryScores 形式）
@@ -97,7 +97,7 @@ const testCases: {
 // ローカル実行用
 export default function main() {
   for (const { name, input, expected } of testCases) {
-    const result = judgeSamuraiType(input);
+    const result = judgeSamurai(input);
     const passed = result === expected ? "✅" : "❌";
     console.log(`${passed} ${name} → ${result}（期待: ${expected}）`);
   }

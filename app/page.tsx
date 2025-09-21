@@ -16,7 +16,7 @@ import { shuffleArray } from "@/lib/utils";
 import { DISPLAY_ORDER, blockTitleByFirstPosition } from "@/lib/quizBlocks";
 
 import { calculateCategoryScores, type ScoreMap } from "@/lib/scoringSystem";
-import { judgeSamuraiType } from "@/lib/samuraiJudge";
+import { judgeSamurai } from "@/lib/samuraiJudge";
 import { supabase, type SamuraiResult } from "@/lib/supabase";
 import generateScoreComments from "@/lib/generateScoreComments";
 
@@ -209,7 +209,7 @@ export default function Home() {
     // 4) 正規化 0〜3 & タイプ判定
     const normalized = result.normalized as NormalizedCategoryScores;
     const normalizedFixed = ensureHarassmentAliases(normalized); // ★両キーを揃える
-    const typeDisplay = String(judgeSamuraiType(normalizedFixed) ?? "");
+    const typeDisplay = String(judgeSamurai(normalizedFixed) ?? "");
 
     // 5) コメント生成（日本語ラベルで渡す）
     const commentSource: Record<string, number> = {

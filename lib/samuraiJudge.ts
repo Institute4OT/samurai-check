@@ -224,3 +224,6 @@ export function judgeSamurai(s: NormalizedCategoryScores): SamuraiType {
 
   return nearestType(s);
 }
+
+// 互換のための別名エクスポート（古い import を壊さない）
+export { judgeSamurai as judgeSamuraiType };
