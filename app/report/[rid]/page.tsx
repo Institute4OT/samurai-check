@@ -1,13 +1,14 @@
 // app/report/[rid]/page.tsx
-import { redirect, notFound } from "next/navigation";
+import "server-only";
+import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import ReportTemplate from "@/components/report/ReportTemplate";
-import {
-  type NormalizedCategoryScores,
-  type SamuraiType,
-  type ScorePattern,
-  type QuestionId,
+import type {
+  NormalizedCategoryScores,
+  SamuraiType,
+  ScorePattern,
+  QuestionId,
 } from "@/types/diagnosis";
 import { judgeSamurai } from "@/lib/samuraiJudge";
 import { TYPE_CONTENTS } from "@/lib/report/typeContents";
@@ -16,194 +17,178 @@ import { getPersonalizedComments } from "@/lib/report/personalization";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// ---------------- Util ----------------
+// -------- utils
 const Rid = z.string().uuid();
-type Row = Record<string, any>;
-const TABLES = ["diagnoses", "samurairesults", "samurai_results", "samurairesult", "results"] as const;
 
-function first<T>(...vals: (T | null | undefined)[]) {
-  for (const v of vals) if (v != null) return v as T;
-  return undefined;
-}
-
-// harassment の表記ゆれを吸収
-function ensureHarassmentAliases<T extends Record<string, any>>(scores: T) {
-  const v =
-    Number.isFinite(scores["harassmentAwareness"]) ? scores["harassmentAwareness"] :
-    Number(scores["無自覚ハラ傾向"] ?? scores["harassment_awareness"] ?? 0);
-
-  const r =
-    Number.isFinite(scores["harassmentRisk"]) ? scores["harassmentRisk"] :
-    Number(scores["無自覚ハラスメント傾向"] ?? scores["harassment_risk"] ?? v ?? 0);
-
-  return { ...scores, harassmentAwareness: v, harassmentRisk: r } as T & {
-    harassmentAwareness: number; harassmentRisk: number;
-  };
-}
-
-function coerceScores(src: any): NormalizedCategoryScores | null {
-  if (!src) return null;
-
-  if (Array.isArray(src) && src.length >= 6) {
-    const n = (i: number) => Number(src[i] ?? 0);
-    return {
-      delegation: n(0),
-      orgDrag: n(1),
-      commGap: n(2),
-      updatePower: n(3),
-      genGap: n(4),
-      harassmentAwareness: n(5),
-    };
-  }
-
-  const o = typeof src === "object" ? (src as Record<string, any>) : {};
-  const val = (keys: string[], fb = 0) => {
-    for (const k of keys) {
-      const v = o[k];
-      if (v !== undefined && v !== null && v !== "") return Number(v);
-    }
-    return fb;
-  };
-
-  const base = {
-    delegation: val(["delegation", "権限委譲・構造健全度", "delegation_score"]),
-    orgDrag: val(["orgDrag", "組織進化阻害", "org_drag"]),
-    commGap: val(["commGap", "コミュ力誤差", "comm_gap"]),
-    updatePower: val(["updatePower", "アップデート力", "update_power"]),
-    genGap: val(["genGap", "ジェネギャップ感覚", "gen_gap"]),
-    harassmentAwareness: val([
-      "harassmentAwareness",
-      "harassment_awareness",
-      "無自覚ハラ傾向",
-      "無自覚ハラスメント傾向",
-      "harassmentRisk",
-    ]),
-  };
-
-  return ensureHarassmentAliases(base);
+function coerceNum(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function coerceScorePattern(v: unknown): ScorePattern {
-  const src = (v && typeof v === "object" ? (v as Record<string, unknown>) : {}) as Record<
-    string,
-    unknown
-  >;
-  const out: Record<QuestionId, string> = {} as any;
-  for (let i = 1 as const; i <= 16; i++) {
-    const k = `Q${i}` as QuestionId;
-    const raw = src[k];
-    let text = "";
-    if (Array.isArray(raw)) {
-      const first = (raw as unknown[])[0];
-      text = typeof first === "string" ? first : String(first ?? "");
-    } else if (typeof raw === "string") text = raw;
-    else if (raw != null) text = String(raw);
-    out[k] = text ?? "";
+  const keys: QuestionId[] = [
+    "Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8",
+    "Q9","Q10","Q11","Q12","Q13","Q14","Q15","Q16",
+  ];
+  const out: Record<string,string> = {};
+  if (v && typeof v === "object") {
+    for (const k of keys) {
+      const raw = (v as any)[k];
+      if (typeof raw === "string") out[k] = raw;
+      else if (Array.isArray(raw) && raw.length) out[k] = String(raw[0] ?? "");
+      else if (raw != null) out[k] = String(raw);
+      else out[k] = "";
+    }
+  } else {
+    for (const k of keys) out[k] = "";
   }
   return out as ScorePattern;
 }
 
-async function fetchRow(rid: string) {
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
-  for (const t of TABLES) {
-    const { data } = await admin.from(t).select("*").eq("id", rid).limit(1).maybeSingle();
-    if (data) return { t, row: data as Row };
-  }
-  return null;
+// 「無自覚ハラ傾向」系の表記ゆれを吸収
+function withHarassmentAliases(src: Record<string, unknown>): Record<string, unknown> {
+  const v =
+    (coerceNum(src.harassmentAwareness) ??
+     coerceNum((src as any)["無自覚ハラ傾向"]) ??
+     coerceNum((src as any)["harassment_risk"]) ??
+     coerceNum((src as any)["無自覚ハラスメント傾向"]) ??
+     0);
+  return { ...src, harassmentAwareness: v, harassmentRisk: v };
 }
 
-// ---------------- Page ----------------
-type Props = { params: { rid: string } };
+function buildScores(row: Record<string, any>): NormalizedCategoryScores | null {
+  // candidates: normalized_scores, scores, categories_json, mixed keys
+  const srcRaw =
+    row.normalized_scores ??
+    row.scores ??
+    row.categories_json ??
+    row;
 
-export default async function Page({ params }: Props) {
-  const ridOk = Rid.safeParse(params.rid);
-  if (!ridOk.success) redirect(`/result?rid=${encodeURIComponent(params.rid)}`);
-  const rid = ridOk.data;
+  if (!srcRaw || typeof srcRaw !== "object") return null;
 
-  const hit = await fetchRow(rid);
-  if (!hit) redirect(`/result?rid=${encodeURIComponent(rid)}`);
+  const src = withHarassmentAliases(srcRaw as any);
 
-  const row = hit.row;
+  const delegation =
+    coerceNum(src.delegation) ??
+    coerceNum((src as any)["権限委譲・構造健全度"]);
+  const orgDrag =
+    coerceNum(src.orgDrag) ??
+    coerceNum((src as any)["組織進化阻害"]);
+  const commGap =
+    coerceNum(src.commGap) ??
+    coerceNum((src as any)["コミュ力誤差"]);
+  const updatePower =
+    coerceNum(src.updatePower) ??
+    coerceNum((src as any)["アップデート力"]);
+  const genGap =
+    coerceNum(src.genGap) ??
+    coerceNum((src as any)["ジェネギャップ感覚"]);
+  const harassmentAwareness =
+    coerceNum(src.harassmentAwareness) ??
+    coerceNum((src as any)["harassmentRisk"]) ??
+    coerceNum((src as any)["無自覚ハラ傾向"]) ??
+    coerceNum((src as any)["無自覚ハラスメント傾向"]);
 
-  const scores =
-    coerceScores(
-      first<any>(
-        row.normalized_scores,
-        row.scores,
-        row.categories_json,
-        row.categories,
-        row.category_scores,
-        row["スコア"],
-      ),
-    ) ??
-    ({
-      delegation: 0,
-      orgDrag: 0,
-      commGap: 0,
-      updatePower: 0,
-      genGap: 0,
-      harassmentAwareness: 0,
-    } satisfies NormalizedCategoryScores);
+  if (
+    delegation == null ||
+    orgDrag == null ||
+    commGap == null ||
+    updatePower == null ||
+    genGap == null ||
+    harassmentAwareness == null
+  ) {
+    return null;
+  }
 
-  const samuraiType: SamuraiType =
-    (first<string>(row.samurai_type, row.type, row.result_type) as SamuraiType | undefined) ||
-    judgeSamurai(scores);
+  return {
+    delegation,
+    orgDrag,
+    commGap,
+    updatePower,
+    genGap,
+    harassmentAwareness,
+  };
+}
 
-  const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[samuraiType];
-  if (!content) {
-    // 想定外タイプは結果画面へ退避
+type PageProps = { params: { rid: string } };
+
+export default async function ReportPage({ params }: PageProps) {
+  const r = Rid.safeParse(params.rid);
+  if (!r.success) return notFound();
+  const rid = r.data;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!url || !key) {
+    // 環境変数事故時は結果画面へ避難
+    redirect(`/result?rid=${encodeURIComponent(rid)}`);
+  }
+  const supabase = createClient(url, key);
+
+  // 1) まず diagnoses
+  const { data: d1 } = await supabase
+    .from("diagnoses")
+    .select("id, company_size, normalized_scores, scores, categories_json, samurai_type, score_pattern")
+    .eq("id", rid)
+    .maybeSingle();
+
+  // 2) 予備: samurairesults / samurai_results / results（列名ばらつき吸収）
+  let d2: any = null;
+  if (!d1) {
+    const candidates = ["samurairesults", "samurai_results", "results"];
+    for (const t of candidates) {
+      const { data } = await supabase
+        .from(t)
+        .select("*")
+        .or(`id.eq.${rid},uuid.eq.${rid},result_id.eq.${rid}`)
+        .limit(1)
+        .maybeSingle();
+      if (data) { d2 = data; break; }
+    }
+  }
+
+  const row = d1 ?? d2;
+  if (!row) {
+    // データが見つからないときは 404 にせず結果画面へ
     redirect(`/result?rid=${encodeURIComponent(rid)}`);
   }
 
-  // パーソナライズは安全実行（失敗しても空で進む）
-  let personal:
-    | ReturnType<typeof getPersonalizedComments>
-    | { items: any[]; summary?: string } = { items: [] };
-  try {
-    personal = getPersonalizedComments({
-      scorePattern: coerceScorePattern(first<any>(row.score_pattern, row.pattern_json, row.answers_json, row.raw_scores)),
-      normalizedScores: scores,
-      maxItems: 2,
-    });
-    if (!personal || !Array.isArray((personal as any).items)) {
-      personal = { items: [] };
-    }
-  } catch {
-    personal = { items: [] };
+  const scores = buildScores(row);
+  if (!scores) {
+    // スコア欠損時は結果画面へ（Finalize 未完の保険）
+    redirect(`/result?rid=${encodeURIComponent(rid)}`);
   }
 
-  const companySize =
-    first<string>(row.company_size, row.companySize, row.size, row.org_size) ?? "unknown";
+  // samurai_type が無ければ判定
+  let sType: SamuraiType | undefined =
+    typeof row.samurai_type === "string" && row.samurai_type
+      ? (row.samurai_type as SamuraiType)
+      : undefined;
+  if (!sType) sType = judgeSamurai(scores!);
+
+  const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[sType!];
+  if (!content) return notFound();
+
+  const personal = getPersonalizedComments({
+    scorePattern: coerceScorePattern(row.score_pattern),
+    normalizedScores: scores!,
+    maxItems: 2,
+  });
 
   const openChat = {
     qrSrc: process.env.NEXT_PUBLIC_OPENCHAT_QR ?? undefined,
     linkHref: process.env.NEXT_PUBLIC_OPENCHAT_URL ?? undefined,
   };
 
-  // 完全にシリアライズ可能にしてから渡す（予期せぬ型を除去）
-  const serial = JSON.parse(
-    JSON.stringify({
-      diagId: rid,
-      samuraiType,
-      scores,
-      companySize,
-      content,
-      personal,
-    }),
-  );
-
   return (
     <main className="container py-6">
       <ReportTemplate
-        diagId={serial.diagId}
-        samuraiType={serial.samuraiType}
-        normalizedScores={serial.scores}
-        companySize={serial.companySize}
-        content={serial.content}
-        personal={serial.personal}
+        diagId={rid}
+        samuraiType={sType!}
+        normalizedScores={scores!}
+        companySize={(row.company_size as string | undefined) ?? "unknown"}
+        content={content}
+        personal={personal}
         openChat={openChat}
         brandLogoSrc="/images/iot-logo.svg"
         brandSiteUrl="https://ourdx-mtg.com/"

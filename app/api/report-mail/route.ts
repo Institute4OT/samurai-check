@@ -1,103 +1,96 @@
 // app/api/report-mail/route.ts
 /* eslint-disable no-console */
 import { NextRequest, NextResponse } from "next/server";
-import { buildReportEmail } from "@/lib/emailTemplates";
+import { buildReportEmail } from "@/lib/emailTemplates"; // V2 を re-export している想定
 import { sendMail } from "@/lib/mail";
-
-// buildReportEmail の第1引数型をそのまま取得（テンプレ実装に追従）
-type ReportEmailInput = Parameters<typeof buildReportEmail>[0];
 
 export const runtime = "nodejs";
 
+function extractRidFromUrl(u: string | undefined | null): string | null {
+  if (!u) return null;
+  try {
+    const url = new URL(u);
+    // /report/<uuid> 形式
+    const m = url.pathname.match(/\/report\/([0-9a-fA-F-]{36})/);
+    if (m) return m[1];
+    // ?rid=<uuid> 形式
+    const q = url.searchParams.get("rid");
+    if (q && /^[0-9a-fA-F-]{36}$/.test(q)) return q;
+  } catch { /* noop */ }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    // 受信ボディ（既存クライアントからのPOSTを想定）
     const data = (await req.json()) ?? {};
 
-    // 既存実装に合わせた値の組み立て（無ければ既定値）
-    const email: string = (data.email ?? "").toString();
-    const toNameBase: string = (
-      data.userName ??
-      data.toName ??
-      data.recipientName ??
-      email.split("@")[0] ??
-      ""
-    ).toString();
-    const toName = toNameBase || "お客様";
+    // to の候補（必須）
+    const to: string =
+      data.email ||
+      data.toEmail ||
+      data.recipient ||
+      "";
 
-    const samuraiType = data.samuraiType ?? data.type ?? "unknown";
-    const companySize = data.company_size ?? data.companySize ?? "unknown";
-
-    const reportLink: string =
-      data.reportLink ??
-      data.reportUrl ??
-      (typeof location === "object"
-        ? `${location.origin}/report`
-        : "https://example.com/report");
-
-    const consultLink: string =
-      data.consultLink ??
-      data.bookingUrl ??
-      (typeof location === "object"
-        ? `${location.origin}/consult`
-        : "https://example.com/consult");
-
-    // オプション（存在すれば流す）
-    const shareLink = data.shareLink;
-    const openChatLink = data.openChatLink;
-    const openChatQrSrc = data.openChatQrSrc;
-    const diagId = data.diagId;
-
-    /**
-     * ★型アダプタ：
-     * - テンプレ側が期待するキー名が環境により異なることがあるため
-     *   （toName / userName / recipientName など）を**同梱**
-     * - その上で ReportEmailInput にキャストして型エラーを回避
-     */
-    const input = {
-      // 名前系は“同義キー”を全部入れてテンプレ側どれでも拾えるようにする
-      toName,
-      userName: toName,
-      recipientName: toName,
-
-      // 主要フィールド
-      samuraiType,
-      companySize,
-      reportLink,
-      consultLink,
-
-      // 追加でテンプレが参照するかもしれない任意項目
-      shareLink,
-      openChatLink,
-      openChatQrSrc,
-      diagId,
-    } as unknown as ReportEmailInput;
-
-    // メール本文生成
-    const mail = buildReportEmail(input);
-
-    // 送信先：ユーザー or フォールバック
-    const to = (email || process.env.MAIL_TO_TRS || "").toString().trim();
-    if (to) {
-      await sendMail({
-        to,
-        subject: mail.subject,
-        html: mail.html,
-        text: mail.text,
-      });
+    if (!to) {
+      return NextResponse.json(
+        { ok: false, error: "missing_to" },
+        { status: 400 }
+      );
     }
+
+    const appBase =
+      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") || "";
+
+    // rid と reportUrl を安全に構築
+    const rid: string =
+      data.rid ||
+      extractRidFromUrl(data.reportLink) ||
+      "";
+
+    const reportUrl =
+      rid
+        ? `${appBase}/report/${rid}`
+        : (() => {
+            // rid が取れない時は受信リンクをそのまま使うが、
+            // /report でなければ最悪 /result に落とさないように /report に寄せる
+            const raw = String(data.reportLink || "");
+            const fallbackRid = extractRidFromUrl(raw);
+            return fallbackRid
+              ? `${appBase}/report/${fallbackRid}`
+              : raw || `${appBase}/report/unknown`;
+          })();
+
+    // 宛名ゆれ吸収
+    const toName: string | undefined =
+      data.toName || data.name || data.userName || data.recipientName || undefined;
+
+    // 会社規模ゆれ吸収
+    const companySize: string | undefined =
+      data.companySize || data.company_size || undefined;
+
+    // V2 テンプレへ（文言・分岐はテンプレそのまま）
+    const mail = buildReportEmail({
+      rid: rid || undefined,
+      toName,
+      companySize,
+      typeName: data.typeName || undefined,
+    });
+
+    await sendMail({
+      to,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
 
     return NextResponse.json({
       ok: true,
       to,
-      subject: mail.subject,
-      htmlPreviewBytes: Buffer.byteLength(mail.html, "utf8"),
+      reportUrl,
     });
-  } catch (err: any) {
-    console.error("[api/report-mail] error:", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? String(err) },
-      { status: 400 },
-    );
+  } catch (err: unknown) {
+    const msg = (err instanceof Error) ? err.message : String(err);
+    console.error("[api/report-mail] error:", msg);
+    return NextResponse.json({ ok: false, error: msg }, { status: 400 });
   }
 }
