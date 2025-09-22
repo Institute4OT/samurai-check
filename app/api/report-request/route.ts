@@ -1,89 +1,74 @@
 // app/api/report-request/route.ts
-/* eslint-disable no-console */
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendMail } from "@/lib/mail";
-import { buildReportEmailV2 } from "@/lib/emailTemplatesV2";
+import buildReportEmailV2 from "@/lib/emailTemplatesV2";
 
-export const runtime = "nodejs";
+// Supabase 管理者クライアント
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-// 入力: レポート申込フォームの値（シンプル＆厳密）
-const Body = z.object({
-  rid: z.string().uuid(),
-  name: z.string().min(1).max(120),
-  email: z.string().email(),
-  companyName: z.string().optional().nullable(),
-  companySize: z.string().optional().nullable(),
-  industry: z.string().optional().nullable(),
-  ageRange: z.string().optional().nullable(),
-});
-
-export async function POST(req: NextRequest) {
-  // ---- Body parse
-  const json = await req.json().catch(() => null);
-  const parsed = Body.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { ok: false, error: "invalid_body", detail: parsed.error.format() },
-      { status: 400 }
-    );
-  }
-  const body = parsed.data;
-
-  // ---- Supabase upsert（samurairesults に保存）
+export async function POST(req: Request) {
   try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    // SRK があれば使い、無ければ ANON（RLS 設定次第でbest-effort）
-    const key =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const admin = createClient(url, key, { auth: { persistSession: false } });
+    const body = await req.json();
 
-    const { data: prev } = await admin
-      .from("samurairesults")
-      .select("id, uuid, company_size, industry, age_range, name, email")
-      .or(`id.eq.${body.rid},uuid.eq.${body.rid}`)
-      .limit(1)
-      .maybeSingle();
+    // 必須項目チェック
+    if (!body.rid || !body.email) {
+      return NextResponse.json(
+        { error: "rid と email は必須です" },
+        { status: 400 }
+      );
+    }
 
+    // samurairesults に upsert
     const payload = {
-      id: prev?.id ?? body.rid,
-      uuid: body.rid,
-      name: body.name,
-      email: body.email,
-      company_name: body.companyName ?? null,
-      company_size: body.companySize ?? prev?.company_size ?? null,
-      industry: body.industry ?? prev?.industry ?? null,
-      age_range: body.ageRange ?? prev?.age_range ?? null,
-      is_consult_request: true, // 申込有りフラグ（命名は現行に合わせる）
+      id: body.rid, // ← rid を PK として利用
+      name: body.name ?? null,
+      email: body.email ?? null,
+      company_name: body.company ?? null,
+      company_size: body.companySize ?? null,
+      industry: body.industry ?? null,
+      age_range: body.ageBand ?? null,
+      is_consult_request: false, // ここは詳細レポート申込なので false 固定
       updated_at: new Date().toISOString(),
     };
 
-    await admin.from("samurairesults").upsert(payload, { onConflict: "id" });
+    const { error } = await supabaseAdmin
+      .from("samurairesults")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("❌ supabase upsert error:", error);
+      return NextResponse.json({ error: "DB保存に失敗しました" }, { status: 500 });
+    }
+
+    // レポートURLを生成
+    const appBase =
+      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") || "";
+    const reportUrl = `${appBase}/report/${body.rid}`;
+
+    // 📧 メール送信
+    const mail = buildReportEmailV2({
+      rid: body.rid,
+      toName: body.name,
+      companySize: body.companySize ?? undefined,
+    });
+
+    await sendMail({
+      to: body.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+
+    return NextResponse.json({ ok: true, reportUrl });
   } catch (e) {
-    console.error("[report-request] upsert failed:", e);
-    // 保存に失敗してもメール送信は継続（ユーザー体験優先）
+    console.error("❌ report-request route failed:", e);
+    return NextResponse.json(
+      { error: "サーバーエラーが発生しました" },
+      { status: 500 }
+    );
   }
-
-  // ---- メール送信（/report/{rid} の純リンク固定・UTM付与しない）
-  const appBase =
-    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") || "";
-  const reportUrl = `${appBase}/report/${body.rid}`;
-
-  // V2 テンプレに正しく渡す（文言・分岐はテンプレ側をそのまま使用）
-  const mail = buildReportEmailV2({
-    rid: body.rid,
-    toName: body.name,            // 宛名（テンプレが toName を期待）
-    companySize: body.companySize ?? undefined,
-  });
-
-  await sendMail({
-    to: body.email,               // string で渡す
-    subject: mail.subject,
-    html: mail.html,
-    text: mail.text,
-  });
-
-  return NextResponse.json({ ok: true });
 }
