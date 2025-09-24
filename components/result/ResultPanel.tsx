@@ -77,6 +77,9 @@ export default function ResultPanel({
   onRestart,
   scorePattern,
 }: Props) {
+  // ★console.log追加
+  console.log("👀[ResultPanel] props.scorePattern:", scorePattern);
+
   const [ridResolved, setRidResolved] = useState<string>(() => {
     if (isIdish(rid)) return String(rid);
     const fromUrl = pickRidFromLocation();
@@ -134,13 +137,17 @@ export default function ResultPanel({
       {hasRid && <RidSync rid={ridResolved} />}
 
       {categoriesFixed.length > 0 && (
-        <FinalizeOnMount
-          rid={ridResolved}
-          samuraiTypeKey={finalizeKey}
-          samuraiTypeJa={finalizeJa}
-          categories={categoriesFixed.map((c) => ({ key: c.key, score: c.value }))}
-          scorePattern={scorePattern ?? null}
-        />
+        // ★console.log追加
+        <>
+          {console.log("👀[ResultPanel] FinalizeOnMountに渡すscorePattern:", scorePattern)}
+          <FinalizeOnMount
+            rid={ridResolved}
+            samuraiTypeKey={finalizeKey}
+            samuraiTypeJa={finalizeJa}
+            categories={categoriesFixed.map((c) => ({ key: c.key, score: c.value }))}
+            scorePattern={scorePattern ?? null}
+          />
+        </>
       )}
 
       <h2 className="text-2xl font-bold mb-8">診断結果</h2>

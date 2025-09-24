@@ -1,4 +1,3 @@
-// components/result/FinalizeOnMount.tsx
 "use client";
 
 import { useEffect } from "react";
@@ -50,26 +49,36 @@ export default function FinalizeOnMount({
 }: Props) {
   useEffect(() => {
     (async () => {
-      // 1) rid が無ければ発行（UUID→ダメならフェールセーフ）
       let id = (rid || "").trim();
       if (!isIdish(id)) {
         id = (
           typeof crypto !== "undefined" && "randomUUID" in crypto
             ? crypto.randomUUID()
             : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
-        ) // 代替
+        )
           .replace(/[^A-Za-z0-9_-]/g, "");
       }
       syncRidEverywhere(id);
 
-      // 2) サーバー確定（無ければ作成、あれば「未設定だけ」確定）
+      // ★console.logを追加
+      console.log("👀[FinalizeOnMount] fetch送信body:", {
+        rid: id,
+        samurai_type_key: samuraiTypeKey ?? null,
+        samurai_type_ja: samuraiTypeJa ?? null,
+        categories_json:
+          categories?.map((c) => ({
+            key: c.key,
+            score: Number(c.score),
+          })) ?? [],
+        score_pattern: scorePattern ?? null,
+      });
+
       try {
         await fetch("/api/results/finalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             rid: id,
-            // ★ サーバ実装に合わせて snake_case で送る
             samurai_type_key: samuraiTypeKey ?? null,
             samurai_type_ja: samuraiTypeJa ?? null,
             categories_json:
@@ -77,12 +86,10 @@ export default function FinalizeOnMount({
                 key: c.key,
                 score: Number(c.score),
               })) ?? [],
-            // ★ 追加：回答スナップショット（未設定のときのみサーバで保存）
             score_pattern: scorePattern ?? null,
           }),
         });
       } catch (e) {
-        // 失敗しても UI は続行（次回アクセスで再同期できる）
         console.warn("[FinalizeOnMount] finalize failed:", e);
       }
     })();
