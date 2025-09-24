@@ -56,7 +56,7 @@ type Props = {
   samuraiType: string | null;
   comments: { strengths: string[]; tips: string[] };
   onRestart: () => void;
-  scorePattern?: Record<string, string[]> | null;
+   scorePattern?: Record<string, string[]> | null; // ←ここ！
 };
 
 const EMPTY: NormalizedCategoryScores = {
