@@ -7,24 +7,16 @@ import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 
 // ==== プロジェクト内ユーティリティ ====
-// - メール送信
 import { sendMail } from "@/lib/mail";
-// - 相談メール本文テンプレ
 import { buildConsultEmail } from "@/lib/emailTemplates";
 
 // ------------------------------------------------------------
-// 環境変数
-// ------------------------------------------------------------
 const SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+const REPORT_URL = (process.env.NEXT_PUBLIC_REPORT_URL || "").trim();
+const BOOKING_BASE = (process.env.NEXT_PUBLIC_BOOKING_BASE_URL || "").trim();
+const MAIL_TO_TRS = (process.env.MAIL_TO_TRS || "").trim();
 
-const REPORT_URL = (process.env.NEXT_PUBLIC_REPORT_URL || "").trim(); // 例: https://xxx/report
-const BOOKING_BASE = (process.env.NEXT_PUBLIC_BOOKING_BASE_URL || "").trim(); // 例: https://xxx/consult
-
-const MAIL_TO_TRS = (process.env.MAIL_TO_TRS || "").trim(); // テスト/フォールバック宛先
-
-// ------------------------------------------------------------
-// 型
 // ------------------------------------------------------------
 type Consultant = {
   id: string;
@@ -39,12 +31,12 @@ const IntakeBodySchema = z.object({
   ageRange: z.string().optional(),
   companySize: z.string().optional(),
   industry: z.string().optional(),
+  consultant: z.string().optional(),
+  message: z.string().optional(),
 });
 
 type IntakeBody = z.infer<typeof IntakeBodySchema>;
 
-// ------------------------------------------------------------
-// ユーティリティ
 // ------------------------------------------------------------
 function getAbsoluteOrigin(req: Request) {
   const url = new URL(req.url);
@@ -124,8 +116,6 @@ async function updateSamuraiResultFields(
 }
 
 // ------------------------------------------------------------
-// ルート本体
-// ------------------------------------------------------------
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
@@ -148,6 +138,8 @@ export async function POST(req: NextRequest) {
         ageRange: String(form.get("ageRange") ?? ""),
         companySize: String(form.get("companySize") ?? ""),
         industry: String(form.get("industry") ?? ""),
+        consultant: String(form.get("consultant") ?? ""),
+        message: String(form.get("message") ?? ""),
       });
     } else {
       try {
@@ -163,6 +155,8 @@ export async function POST(req: NextRequest) {
     const ageRange = body?.ageRange?.trim() || "";
     const companySize = body?.companySize?.trim() || "";
     const industry = body?.industry?.trim() || "";
+    const consultant = body?.consultant?.trim() || "";
+    const message = body?.message?.trim() || "";
 
     logs.push("STEP0: body parsed");
 
@@ -179,21 +173,51 @@ export async function POST(req: NextRequest) {
       `STEP1: samurai_results update ${up.ok ? "OK" : `ERROR(${up.message})`}`,
     );
 
+    // === ここから consult_intake へも保存 ===
+    if (SERVICE_ROLE_KEY && SUPABASE_URL && name && email) {
+      try {
+        const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+        // カラムが違う場合は consult_intake のスキーマに合わせて調整
+        const payload = {
+          rid: rid ?? null,
+          name,
+          email,
+          age_range: ageRange || null,
+          company_size: companySize || null,
+          industry: industry || null,
+          consultant: consultant || null,
+          message: message || null,
+          created_at: new Date().toISOString(),
+        };
+        const { error: ciError } = await supabase.from("consult_intake").insert([payload]);
+        if (ciError) {
+          logs.push(`consult_intake insert ERROR: ${ciError.message}`);
+          diagnostics.consultIntakeError = ciError.message;
+        } else {
+          logs.push("consult_intake insert OK");
+        }
+      } catch (e: any) {
+        logs.push(`consult_intake insert failed: ${e?.message || e}`);
+        diagnostics.consultIntakeException = e?.message || String(e);
+      }
+    } else {
+      logs.push("consult_intake insert skipped (no service role key or missing name/email)");
+    }
+    // === /consult_intake 保存ここまで ===
+
     // 3) 相談担当を決定
-    const consultant = pickConsultantByQuery(req);
-    diagnostics.consultant = consultant;
+    const consultantInfo = pickConsultantByQuery(req);
+    diagnostics.consultant = consultantInfo;
 
     // 4) 各種リンク生成（本番オリジン優先）
     const origin = getAbsoluteOrigin(req);
 
-    // REPORT_URL は定数（関数呼び出しではない）
     const reportUrl = rid
       ? REPORT_URL
         ? `${REPORT_URL}?rid=${encodeURIComponent(rid)}`
         : `${origin}/report?rid=${encodeURIComponent(rid)}`
       : `${origin}/report`;
 
-    // bookingUrl は自前で安全生成
     const bookingUrl = (() => {
       const base = BOOKING_BASE || `${origin}/consult`;
       const qs = new URLSearchParams();
@@ -205,10 +229,10 @@ export async function POST(req: NextRequest) {
 
     diagnostics.urls = { reportUrl, bookingUrl, origin };
 
-    // 5) メール送信準備（型アダプタで1引数シグネチャに合わせる）
+    // 5) メール送信準備
     const toName = name ? `${name} 様` : "お客様";
     const mail = (buildConsultEmail as unknown as (arg: any) => any)({
-      ...consultant, // Consultant型の必須フィールド(id/name/email 等)
+      ...consultantInfo,
       toName,
       reportUrl,
       bookingUrl,
