@@ -126,8 +126,28 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
   const bucket = sizeBucket(input.companySize);
 
   // ★レポートURLは /report/<rid> 固定。UTMのみ付与（rid/emailは付けない）
-  const reportBase = input.reportLink || `${APP_BASE}/report?id=${encodeURIComponent(rid)}`;
-  const reportUrl = addUtmOnly(reportBase, "report_ready", "cta_report", rid);
+  // 既存
+  // const reportBase = input.reportLink || `${APP_BASE}/report?id=${encodeURIComponent(rid)}`;
+  // const reportUrl  = addUtmOnly(reportBase, "report_ready", "cta_report", rid);
+
+  // 修正（id を必ず付与・維持）
+  function ensureIdParam(url: string, rid: string) {
+    try {
+      const u = new URL(url);
+      if (!u.searchParams.has("id")) {
+        u.searchParams.set("id", rid);
+      }
+      return u.toString();
+    } catch {
+      // 相対URL等が来たときは APP_BASE を使って安全に組み立て
+      const u = new URL(`${APP_BASE}/report?id=${encodeURIComponent(rid)}`);
+      return u.toString();
+    }
+  }
+
+  const base = input.reportLink || `${APP_BASE}/report?id=${encodeURIComponent(rid)}`;
+  const reportBase = ensureIdParam(base, rid);
+  const reportUrl  = addUtmOnly(reportBase, "report_ready", "cta_report", rid);
 
   // 相談／シェア／LINE は従来通り rid/email を付与してOK
   const consultUrl = withRidEmailUtm(

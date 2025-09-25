@@ -114,6 +114,10 @@ export default async function ReportPage({ searchParams }: PageProps) {
   );
   if (!params.success) return notFound();
 
+　if (!params.data.id && (searchParams as any)?.rid) {
+    (params.data as any).id = String((searchParams as any).rid);
+  }
+
   let diagId: string | undefined;
   let companySize: string | undefined;
   let samuraiType: SamuraiType | undefined;
