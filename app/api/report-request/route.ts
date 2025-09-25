@@ -18,13 +18,13 @@ const supabase = createClient(
 const FormDataSchema = z.object({
   name: z.string(),
   email: z.string().email(),
-  companySize: z.string().optional(),
-  industry: z.string().optional(),
-  ageGroup: z.string().optional(),
-  type: z.string(),              // 恐竜タイプなど
+  companySize: z.string().nullable().optional(),
+  industry: z.string().nullable().optional(),
+  ageGroup: z.string().nullable().optional(),
+  type: z.string(),              // 武将タイプ
   samuraiResultId: z.string(),  // Supabase ID
-  consultant: z.string().optional(),
-  consultReason: z.string().optional(),
+  consultant: z.string().nullable().optional(),
+  consultReason: z.string().nullable().optional(),
 });
 
 // =================== メイン関数 ===================
@@ -34,6 +34,7 @@ export async function POST(req: Request) {
   const parsed = FormDataSchema.safeParse(body);
 
   if (!parsed.success) {
+    console.error('❌ バリデーション失敗:', parsed.error.flatten());
     return NextResponse.json({ error: 'Invalid form data' }, { status: 400 });
   }
 
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
     typeName: samuraiType,
     toName: name,
     email,
-    companySize,
+     companySize: companySize ?? '',
   });
 
   // =================== Supabase 保存 ===================
