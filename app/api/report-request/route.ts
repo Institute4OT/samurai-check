@@ -25,6 +25,7 @@ const FormDataSchema = z.object({
   samuraiResultId: z.string(),  // Supabase ID
   consultant: z.string().nullable().optional(),
   consultReason: z.string().nullable().optional(),
+  score_pattern: z.any().optional(),
 });
 
 // =================== メイン関数 ===================
