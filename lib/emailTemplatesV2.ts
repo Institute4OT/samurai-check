@@ -126,7 +126,7 @@ export function buildReportEmailV2(input: ReportEmailV2Input): MailRender {
   const bucket = sizeBucket(input.companySize);
 
   // ★レポートURLは /report/<rid> 固定。UTMのみ付与（rid/emailは付けない）
-  const reportBase = input.reportLink || `${APP_BASE}/report/${encodeURIComponent(rid)}`;
+  const reportBase = input.reportLink || `${APP_BASE}/report?id=${encodeURIComponent(rid)}`;
   const reportUrl = addUtmOnly(reportBase, "report_ready", "cta_report", rid);
 
   // 相談／シェア／LINE は従来通り rid/email を付与してOK

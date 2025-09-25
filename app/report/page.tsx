@@ -1,4 +1,5 @@
 // app/report/page.tsx
+
 import { notFound } from "next/navigation";
 import ReportTemplate from "@/components/report/ReportTemplate";
 import type { NormalizedCategoryScores, SamuraiType } from "@/types/diagnosis";
@@ -22,7 +23,6 @@ const SamuraiTypeEnum = z.enum([
   "上杉謙信型",
 ]);
 
-// harassmentRisk は互換用で optional（来ても受け入れる）
 const ScoresSchema = z.object({
   delegation: z.number().min(0).max(3),
   orgDrag: z.number().min(0).max(3),
@@ -36,7 +36,7 @@ const ScoresSchema = z.object({
 const ParamsSchema = z.object({
   id: z.string().uuid().optional(),
   samuraiType: SamuraiTypeEnum.optional(),
-  scores: z.string().optional(), // JSON.stringify(NormalizedCategoryScores)
+  scores: z.string().optional(),
 });
 
 type PageProps = {
@@ -52,7 +52,8 @@ function parseScoresFromParam(
   try {
     const obj = JSON.parse(raw);
     return ScoresSchema.parse(obj);
-  } catch {
+  } catch (err) {
+    console.warn("⚠️ parseScoresFromParam failed:", err, raw);
     return undefined;
   }
 }
@@ -75,7 +76,10 @@ async function fetchFromSupabase(id: string): Promise<{
     .limit(1)
     .maybeSingle();
 
-  if (error || !data) return {};
+  if (error || !data) {
+    console.error("❌ Supabase fetch error:", error);
+    return {};
+  }
 
   const type = SamuraiTypeEnum.safeParse(data.samurai_type).success
     ? (data.samurai_type as SamuraiType)
@@ -84,7 +88,8 @@ async function fetchFromSupabase(id: string): Promise<{
   let scores: NormalizedCategoryScores | undefined;
   try {
     scores = ScoresSchema.parse(data.normalized_scores);
-  } catch {
+  } catch (err) {
+    console.warn("⚠️ normalized_scores parse failed:", err, data.normalized_scores);
     scores = undefined;
   }
 
@@ -99,7 +104,6 @@ async function fetchFromSupabase(id: string): Promise<{
 /* ===================== ページ本体 ===================== */
 
 export default async function ReportPage({ searchParams }: PageProps) {
-  // 1) クエリ正規化
   const params = ParamsSchema.safeParse(
     Object.fromEntries(
       Object.entries(searchParams ?? {}).map(([k, v]) => [
@@ -124,29 +128,37 @@ export default async function ReportPage({ searchParams }: PageProps) {
     normalizedScores = fetched.scores ?? normalizedScores;
   }
 
-  // 3) URLパラメータの scores をフォールバックで採用
+  // 3) URLパラメータ fallback
   if (!normalizedScores && params.data.scores) {
+    console.info("🌀 normalizedScores missing from DB. Fallback to URL param.");
     normalizedScores =
       parseScoresFromParam(params.data.scores) ?? normalizedScores;
   }
 
-  // 4) ここまででスコアが無ければ404
-  if (!normalizedScores) return notFound();
+  // 4) still no score? -> 404
+  if (!normalizedScores) {
+    console.error("🚫 normalizedScores not found. Abort.");
+    return notFound();
+  }
 
-  // 5) 互換キーを補正（両キーをそろえる）
+  // 5) alias補正
   normalizedScores = ensureHarassmentAliases(normalizedScores);
 
-  // 6) タイプ判定（欠損時のみ）
+  // 🔍ログ出力（デバッグ用）
+  console.info("✅ normalizedScores:", normalizedScores);
+
+  // 6) タイプ判定
   if (!samuraiType) {
     try {
       samuraiType = judgeSamurai(normalizedScores);
-    } catch {
+    } catch (err) {
+      console.warn("⚠️ judgeSamurai failed:", err);
       samuraiType = undefined;
     }
   }
   if (!samuraiType) return notFound();
 
-  // 7) 型別本文（既存 typeContents を利用）
+  // 7) 型別本文
   const content = (TYPE_CONTENTS as Record<SamuraiType, any>)[samuraiType];
   if (!content) return notFound();
 
