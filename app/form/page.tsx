@@ -102,16 +102,16 @@ export default function ReportRequestFormPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          rid: r, // 正式キー
-          resultId: r, // 互換
-          name: name.trim(),
-          email: email.trim(),
+          rid,
+          name,
+          email,
+          company_name: company,
           company_size: companySize,
-          company_name: company.trim() || null,
           industry,
-          age_range: ageBand,
-        }),
+          age_group: ageBand,
+        }), // ✅ ←ここカンマで終える！
       });
+
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       setMessage("送信しました。数分以内にメールをご確認ください！");
     } catch (err: any) {

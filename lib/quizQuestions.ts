@@ -197,7 +197,7 @@ export const quizQuestions: QuizQuestion[] = [
     id: 7,
     questionText: "社内のDXやAI導入へのあなたの姿勢に近いものは？（単一選択）",
     options: [
-      { text: "先行導入して小さく回し、現場で運用改善を進めている", score: 3 },
+      { text: "積極的に導入して、現場で運用改善を進めている", score: 3 },
       { text: "計画立案・情報収集中で、試行・検証の準備をしている", score: 2 },
       { text: "社内に抵抗勢力があり、導入には苦戦中", score: 1 },
       { text: "重要性は理解しているが、他優先で着手できていない", score: 0 },

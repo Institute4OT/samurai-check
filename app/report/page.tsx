@@ -114,7 +114,7 @@ export default async function ReportPage({ searchParams }: PageProps) {
   );
   if (!params.success) return notFound();
 
-　if (!params.data.id && (searchParams as any)?.rid) {
+  if (!params.data.id && (searchParams as any)?.rid) {
     (params.data as any).id = String((searchParams as any).rid);
   }
 
